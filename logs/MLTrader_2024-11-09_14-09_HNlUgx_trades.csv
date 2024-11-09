@@ -1,0 +1,17 @@
+time,strategy,identifier,symbol,side,type,status,multiplier,time_in_force,asset.strike,asset.multiplier,asset.asset_type,price,filled_quantity,trade_cost
+2020-02-03 09:30:00-05:00,MLTrader,96d562e5b70d4013b8ef39855e6d70fc,SPY,sell,market,new,1,gtc,0.0,1,stock,,,
+2020-02-03 09:30:00-05:00,MLTrader,96d562e5b70d4013b8ef39855e6d70fc,SPY,sell,market,fill,1,gtc,0.0,1,stock,323.3500061035156,155.0,0.0
+2020-02-10 09:30:00-05:00,MLTrader,94246e055de1401da00209797542c39d,SPY,sell,market,new,1,gtc,0.0,1,stock,,,
+2020-02-10 09:30:00-05:00,MLTrader,94246e055de1401da00209797542c39d,SPY,sell,market,fill,1,gtc,0.0,1,stock,331.2300109863281,227.0,0.0
+2020-02-13 09:30:00-05:00,MLTrader,ca25deabf38940dbb146b44c431a9d1f,SPY,sell,market,new,1,gtc,0.0,1,stock,,,
+2020-02-13 09:30:00-05:00,MLTrader,ca25deabf38940dbb146b44c431a9d1f,SPY,sell,market,fill,1,gtc,0.0,1,stock,335.8599853515625,335.0,0.0
+2020-03-06 09:30:00-05:00,MLTrader,87bcc1650b97423c953af80c7f9bb784,SPY,sell,market,new,1,gtc,0.0,1,stock,,,
+2020-03-06 09:30:00-05:00,MLTrader,87bcc1650b97423c953af80c7f9bb784,SPY,sell,market,fill,1,gtc,0.0,1,stock,293.1499938964844,576.0,0.0
+2020-03-09 09:30:00-04:00,MLTrader,93ee49427df8471cb62192efb79c7f59,SPY,sell,market,new,1,gtc,0.0,1,stock,,,
+2020-03-09 09:30:00-04:00,MLTrader,93ee49427df8471cb62192efb79c7f59,SPY,sell,market,fill,1,gtc,0.0,1,stock,284.6400146484375,890.0,0.0
+2020-04-13 09:30:00-04:00,MLTrader,2f1bb26ad6c246ac9dc519af3234eaa0,SPY,sell,market,new,1,gtc,0.0,1,stock,,,
+2020-04-13 09:30:00-04:00,MLTrader,2f1bb26ad6c246ac9dc519af3234eaa0,SPY,sell,market,fill,1,gtc,0.0,1,stock,280.9800109863281,1352.0,0.0
+2020-04-27 09:30:00-04:00,MLTrader,188eb43c9ebc40f78c9aefc1d349a135,SPY,buy,market,new,1,day,0.0,1,stock,,,
+2020-04-27 09:30:00-04:00,MLTrader,db13fb62393f4551829c3214f22cda4c,SPY,buy,market,new,1,gtc,0.0,1,stock,,,
+2020-04-27 09:30:00-04:00,MLTrader,188eb43c9ebc40f78c9aefc1d349a135,SPY,buy,market,fill,1,day,0.0,1,stock,291.0199890136719,3535.0,0.0
+2020-04-27 09:30:00-04:00,MLTrader,db13fb62393f4551829c3214f22cda4c,SPY,buy,market,fill,1,gtc,0.0,1,stock,291.0199890136719,1958.0,0.0
