@@ -1,6 +1,6 @@
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
-from typing import Tuple
+from typing import List, Tuple
 
 
 # Set the device to GPU if available, otherwise CPU
@@ -28,6 +28,22 @@ def estimate_sentiment(news):
         return probability, sentiment
     else:
         return 0, labels[-1]
+
+
+def score_headline(headline: str) -> float:
+    if not headline:
+        return 0.0
+    probability, sentiment = estimate_sentiment([headline])
+    probability_value = float(probability)
+    if sentiment == "positive":
+        return probability_value
+    if sentiment == "negative":
+        return -probability_value
+    return 0.0
+
+
+def score_headlines(headlines: List[str]) -> List[float]:
+    return [score_headline(headline) for headline in headlines]
 
 if __name__ == "__main__":
     tensor, sentiment = estimate_sentiment(['markets responded negatively to the news!', 'traders were displeased!'])

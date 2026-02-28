@@ -1,0 +1,21 @@
+{
+  "dataset": "data\\model_dataset\\combined_dataset.csv",
+  "rows_total": 2942,
+  "models": [
+    "logreg_tech",
+    "logreg_full",
+    "xgb_full"
+  ],
+  "features_technical": [
+    "ret_1",
+    "sma_20",
+    "ema_20",
+    "rsi_14",
+    "volume_z20"
+  ],
+  "features_sentiment": [
+    "sentiment_mean",
+    "sentiment_count"
+  ],
+  "n_splits": 5
+}

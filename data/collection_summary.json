@@ -1,0 +1,38 @@
+[
+  {
+    "symbol": "SPY",
+    "news_symbol_query": "SPY",
+    "bars_rows": 753,
+    "news_rows": 200,
+    "dataset_rows": 753,
+    "dataset_labeled_rows": 752,
+    "start": "2022-01-01",
+    "end": "2024-12-31",
+    "timeframe": "1Day",
+    "forward_bars": 1
+  },
+  {
+    "symbol": "BTCUSD",
+    "news_symbol_query": "BTC",
+    "bars_rows": 1096,
+    "news_rows": 200,
+    "dataset_rows": 1096,
+    "dataset_labeled_rows": 1095,
+    "start": "2022-01-01",
+    "end": "2024-12-31",
+    "timeframe": "1Day",
+    "forward_bars": 1
+  },
+  {
+    "symbol": "ETHUSD",
+    "news_symbol_query": "ETH",
+    "bars_rows": 1096,
+    "news_rows": 52,
+    "dataset_rows": 1096,
+    "dataset_labeled_rows": 1095,
+    "start": "2022-01-01",
+    "end": "2024-12-31",
+    "timeframe": "1Day",
+    "forward_bars": 1
+  }
+]

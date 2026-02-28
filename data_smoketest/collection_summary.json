@@ -1,0 +1,14 @@
+[
+  {
+    "symbol": "SPY",
+    "news_symbol_query": "SPY",
+    "bars_rows": 24,
+    "news_rows": 200,
+    "dataset_rows": 24,
+    "dataset_labeled_rows": 23,
+    "start": "2024-10-01",
+    "end": "2024-11-01",
+    "timeframe": "1Day",
+    "forward_bars": 1
+  }
+]
