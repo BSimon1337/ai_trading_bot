@@ -1,5 +1,5 @@
 [Unit]
-Description=AI Trading Bot Monitor Dashboard
+Description=AI Trading Bot (Paper/Live)
 After=network-online.target
 Wants=network-online.target
 
@@ -10,7 +10,7 @@ WorkingDirectory=REPLACE_WORKDIR
 Environment=PYTHONUNBUFFERED=1
 Environment=CUDA_VISIBLE_DEVICES=
 EnvironmentFile=REPLACE_WORKDIR/.env
-ExecStart=REPLACE_WORKDIR/.venv/bin/gunicorn -c REPLACE_WORKDIR/gunicorn.conf.py monitor_app:APP
+ExecStart=REPLACE_WORKDIR/.venv/bin/python REPLACE_WORKDIR/tradingbot.py --mode live
 Restart=always
 RestartSec=5
 TimeoutStopSec=20

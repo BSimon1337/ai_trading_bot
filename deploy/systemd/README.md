@@ -37,6 +37,16 @@ MAX_CONSECUTIVE_LOSSES=3
 MAX_DATA_STALENESS_MINUTES=1440
 ```
 
+CPU-only default:
+
+- The provided systemd units force CPU mode with:
+  - `Environment=CUDA_VISIBLE_DEVICES=`
+- You can also set this in `.env`:
+
+```env
+CUDA_VISIBLE_DEVICES=
+```
+
 ## 3) Install services
 
 ```bash
