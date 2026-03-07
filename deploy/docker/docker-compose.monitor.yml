@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  bot-monitor:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.monitor
+    container_name: bot-monitor
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../logs:/app/logs:ro
+    restart: unless-stopped

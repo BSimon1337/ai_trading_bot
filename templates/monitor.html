@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="15">
+  <title>Trading Bot Monitor</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --line: #374151;
+    }
+    body {
+      margin: 0;
+      background: radial-gradient(1200px 700px at 10% 0%, #1e293b, var(--bg));
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 0 16px;
+    }
+    .head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      margin: 0;
+    }
+    .muted { color: var(--muted); font-size: 13px; }
+    .status {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid var(--line);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .running { color: var(--ok); background: rgba(34,197,94,.12); }
+    .stale { color: var(--bad); background: rgba(239,68,68,.15); }
+    .no_data { color: var(--warn); background: rgba(245,158,11,.14); }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .card {
+      background: linear-gradient(180deg, var(--panel2), var(--panel));
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+    .card .v { margin-top: 6px; font-size: 20px; font-weight: 700; }
+    .pnl-pos { color: var(--ok); }
+    .pnl-neg { color: var(--bad); }
+    .panels {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .panel h2 {
+      margin: 0;
+      padding: 10px 12px;
+      font-size: 14px;
+      border-bottom: 1px solid var(--line);
+      background: #0b1220;
+    }
+    .table-wrap { overflow: auto; max-height: 360px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      border-bottom: 1px solid #263043;
+      padding: 8px 10px;
+      text-align: left;
+      white-space: nowrap;
+    }
+    th { color: var(--muted); position: sticky; top: 0; background: #111827; }
+    .empty { padding: 16px; color: var(--muted); font-size: 13px; }
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .chart-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .chart-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0 0 8px 0;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    canvas { width: 100%; height: 170px; background: #0b1220; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <h1 class="title">Trading Bot Monitor</h1>
+      <div>
+        <span class="status {{ status }}">{{ status }}</span>
+        <span class="muted">updated {{ status_updated_utc }}</span>
+        <span class="muted">
+          {% if heartbeat_age_minutes is not none %}
+            | heartbeat age {{ "%.1f"|format(heartbeat_age_minutes) }} min
+          {% else %}
+            | heartbeat age n/a
+          {% endif %}
+        </span>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="k">Portfolio Value</div><div class="v">${{ "%.2f"|format(portfolio_value) }}</div></div>
+      <div class="card"><div class="k">Day PnL</div><div class="v {% if day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(day_pnl) }}</div></div>
+      <div class="card"><div class="k">Position Qty</div><div class="v">{{ "%.4f"|format(position_qty) }}</div></div>
+      <div class="card"><div class="k">Latest Action</div><div class="v">{{ latest_action }}</div></div>
+      <div class="card"><div class="k">Action Source</div><div class="v">{{ latest_source }}</div></div>
+      <div class="card"><div class="k">Reason</div><div class="v" style="font-size:14px">{{ latest_reason }}</div></div>
+      <div class="card"><div class="k">Decisions Today</div><div class="v">{{ decisions_today }}</div></div>
+      <div class="card"><div class="k">Fills Today</div><div class="v">{{ fills_today }}</div></div>
+    </div>
+
+    <div class="chart-grid">
+      <div class="chart-panel">
+        <p class="chart-title">Portfolio Value Trend (last 30 snapshots)</p>
+        <canvas id="equityChart" width="560" height="170"></canvas>
+      </div>
+      <div class="chart-panel">
+        <p class="chart-title">Day PnL Trend (last 30 snapshots)</p>
+        <canvas id="pnlChart" width="560" height="170"></canvas>
+      </div>
+      <div class="chart-panel">
+        <p class="chart-title">Actions Last 7 Days</p>
+        <canvas id="actionsChart" width="560" height="170"></canvas>
+      </div>
+    </div>
+
+    <div class="panels">
+      <div class="panel">
+        <h2>Recent Decisions (last 15)</h2>
+        {% if recent_decisions_rows %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {% for c in recent_decisions_columns %}<th>{{ c }}</th>{% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in recent_decisions_rows %}
+              <tr>{% for c in recent_decisions_columns %}<td>{{ r[c] }}</td>{% endfor %}</tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">No decision rows yet.</div>
+        {% endif %}
+      </div>
+
+      <div class="panel">
+        <h2>Recent Fills (last 15)</h2>
+        {% if recent_fills_rows %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {% for c in recent_fills_columns %}<th>{{ c }}</th>{% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in recent_fills_rows %}
+              <tr>{% for c in recent_fills_columns %}<td>{{ r[c] }}</td>{% endfor %}</tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">No fill rows yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <script>
+    const equityPoints = {{ equity_points|tojson }};
+    const pnlPoints = {{ pnl_points|tojson }};
+    const actions7d = {{ actions_7d|tojson }};
+
+    function drawLine(canvasId, points, lineColor) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas || !points || points.length < 2) return;
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width, h = canvas.height;
+      const min = Math.min(...points), max = Math.max(...points);
+      const span = (max - min) || 1.0;
+      const xStep = w / (points.length - 1);
+      ctx.clearRect(0,0,w,h);
+      ctx.strokeStyle = "#334155";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0,h-20); ctx.lineTo(w,h-20); ctx.stroke();
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      points.forEach((v, i) => {
+        const x = i * xStep;
+        const y = (h - 24) - ((v - min) / span) * (h - 36);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function drawBars(canvasId, labels, values) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width, h = canvas.height;
+      const max = Math.max(...values, 1);
+      const barW = Math.floor((w - 40) / labels.length) - 12;
+      ctx.clearRect(0,0,w,h);
+      labels.forEach((label, i) => {
+        const x = 20 + i * (barW + 12);
+        const barH = Math.round((values[i] / max) * (h - 55));
+        const y = h - 25 - barH;
+        ctx.fillStyle = "#22c55e";
+        if (label === "sell") ctx.fillStyle = "#ef4444";
+        if (label === "hold") ctx.fillStyle = "#f59e0b";
+        if (label === "flat") ctx.fillStyle = "#60a5fa";
+        ctx.fillRect(x, y, barW, barH);
+        ctx.fillStyle = "#9ca3af";
+        ctx.font = "12px Segoe UI";
+        ctx.fillText(label, x, h - 8);
+        ctx.fillText(String(values[i]), x, y - 4);
+      });
+    }
+
+    drawLine("equityChart", equityPoints, "#22c55e");
+    drawLine("pnlChart", pnlPoints, "#60a5fa");
+    drawBars("actionsChart", ["buy", "sell", "hold", "flat"], [
+      actions7d.buy || 0,
+      actions7d.sell || 0,
+      actions7d.hold || 0,
+      actions7d.flat || 0
+    ]);
+  </script>
+</body>
+</html>

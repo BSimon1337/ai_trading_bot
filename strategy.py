@@ -39,6 +39,9 @@ class SentimentMLStrategy(Strategy):
         decision_log_path: str = "logs/paper_validation/decisions.csv",
         fill_log_path: str = "logs/paper_validation/fills.csv",
         daily_snapshot_path: str = "logs/paper_validation/daily_snapshot.csv",
+        max_notional_per_order_usd: float = 10000.0,
+        max_consecutive_losses: int = 3,
+        max_data_staleness_minutes: int = 1440,
     ):
         self.symbol = symbol
         self.sleeptime = "24H"
@@ -55,6 +58,9 @@ class SentimentMLStrategy(Strategy):
         self.decision_log_path = Path(decision_log_path)
         self.fill_log_path = Path(fill_log_path)
         self.daily_snapshot_path = Path(daily_snapshot_path)
+        self.max_notional_per_order_usd = max_notional_per_order_usd
+        self.max_consecutive_losses = max_consecutive_losses
+        self.max_data_staleness_minutes = max_data_staleness_minutes
         self._model = None
 
         limits = RiskLimits(
@@ -71,6 +77,8 @@ class SentimentMLStrategy(Strategy):
         self._trades_today = 0
         self._cooldown_until = None
         self._pending_trade_equity_anchor = None
+        self._consecutive_losses = 0
+        self._last_features_timestamp = None
 
         self._ensure_log_files()
 
@@ -101,7 +109,7 @@ class SentimentMLStrategy(Strategy):
         )
         self._ensure_csv_file(
             self.fill_log_path,
-            ["timestamp", "symbol", "side", "quantity", "order_id", "portfolio_value", "cash"],
+            ["timestamp", "symbol", "side", "quantity", "order_id", "portfolio_value", "cash", "notional_usd"],
         )
         self._ensure_csv_file(
             self.daily_snapshot_path,
@@ -243,6 +251,7 @@ class SentimentMLStrategy(Strategy):
 
         sentiment_mean, sentiment_count = self._get_sentiment_features()
         latest = bars.iloc[-1]
+        self._last_features_timestamp = latest["timestamp"]
         row = pd.DataFrame(
             [
                 {
@@ -258,6 +267,16 @@ class SentimentMLStrategy(Strategy):
             ]
         )
         return row
+
+    def _is_market_data_stale(self) -> bool:
+        if self._last_features_timestamp is None:
+            return False
+        now = pd.to_datetime(self.get_datetime(), utc=True, errors="coerce")
+        feature_ts = pd.to_datetime(self._last_features_timestamp, utc=True, errors="coerce")
+        if pd.isna(now) or pd.isna(feature_ts):
+            return False
+        age_minutes = (now - feature_ts).total_seconds() / 60.0
+        return age_minutes > float(self.max_data_staleness_minutes)
 
     def _get_model_signal(self) -> tuple[str | None, float | None]:
         model = self._load_model_if_needed()
@@ -325,6 +344,14 @@ class SentimentMLStrategy(Strategy):
         if delta_qty <= 0:
             return {"executed": False, "reason": "delta_qty_zero", "quantity": 0, "order_id": ""}
 
+        order_notional = abs(float(delta_qty) * float(last_price))
+        if order_notional > float(self.max_notional_per_order_usd):
+            capped_qty = floor(float(self.max_notional_per_order_usd) / max(float(last_price), 0.01))
+            if capped_qty <= 0:
+                return {"executed": False, "reason": "max_notional_blocked", "quantity": 0, "order_id": ""}
+            delta_qty = min(delta_qty, capped_qty)
+            order_notional = abs(float(delta_qty) * float(last_price))
+
         projected_leverage = self.risk_manager.estimate_gross_leverage(
             current_qty=current_qty,
             proposed_delta_qty=delta_qty if order_side == "buy" else -delta_qty,
@@ -349,6 +376,7 @@ class SentimentMLStrategy(Strategy):
                 "order_id": order_id,
                 "portfolio_value": round(portfolio_value, 6),
                 "cash": round(float(self.get_cash()), 6),
+                "notional_usd": round(order_notional, 6),
             },
         )
         return {"executed": True, "reason": "submitted", "quantity": int(delta_qty), "order_id": order_id}
@@ -358,7 +386,10 @@ class SentimentMLStrategy(Strategy):
             return
         current = self._get_portfolio_value()
         if current < float(self._pending_trade_equity_anchor):
+            self._consecutive_losses += 1
             self._cooldown_until = self.get_datetime() + Timedelta(minutes=self.cooldown_minutes_after_loss)
+        else:
+            self._consecutive_losses = 0
         self._pending_trade_equity_anchor = None
 
     def _log_decision(
@@ -409,6 +440,19 @@ class SentimentMLStrategy(Strategy):
             self._log_decision("flat", "guardrail", None, None, None, 0, "daily_loss_limit_breached")
             return
 
+        if self._consecutive_losses >= int(self.max_consecutive_losses):
+            self.sell_all()
+            self._log_decision(
+                "flat",
+                "guardrail",
+                None,
+                None,
+                None,
+                0,
+                f"max_consecutive_losses_reached_{self._consecutive_losses}",
+            )
+            return
+
         if self._cooldown_until is not None and self.get_datetime() < self._cooldown_until:
             self._log_decision("hold", "guardrail", None, None, None, 0, "cooldown_active")
             return
@@ -419,6 +463,9 @@ class SentimentMLStrategy(Strategy):
 
         probability, sentiment = self._get_sentiment()
         model_signal, model_prob_up = self._get_model_signal()
+        if self._is_market_data_stale():
+            self._log_decision("hold", "guardrail", model_prob_up, probability, sentiment, 0, "stale_market_data")
+            return
         if model_signal is not None:
             result = self._submit_sized_order(model_signal)
             self._log_decision(

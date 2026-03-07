@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir flask pandas gunicorn
+
+COPY monitor_app.py /app/monitor_app.py
+COPY templates /app/templates
+COPY gunicorn.conf.py /app/gunicorn.conf.py
+
+EXPOSE 8080
+
+CMD ["gunicorn", "-c", "/app/gunicorn.conf.py", "monitor_app:APP"]

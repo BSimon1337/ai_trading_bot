@@ -53,6 +53,9 @@ class BotConfig:
     decision_log_path: str
     fill_log_path: str
     daily_snapshot_path: str
+    max_notional_per_order_usd: float
+    max_consecutive_losses: int
+    max_data_staleness_minutes: int
 
     @property
     def alpaca_creds(self) -> dict:
@@ -83,6 +86,9 @@ class BotConfig:
             "decision_log_path": self.decision_log_path,
             "fill_log_path": self.fill_log_path,
             "daily_snapshot_path": self.daily_snapshot_path,
+            "max_notional_per_order_usd": self.max_notional_per_order_usd,
+            "max_consecutive_losses": self.max_consecutive_losses,
+            "max_data_staleness_minutes": self.max_data_staleness_minutes,
         }
 
 
@@ -129,4 +135,7 @@ def load_config() -> BotConfig:
         decision_log_path=os.getenv("DECISION_LOG_PATH", "logs/paper_validation/decisions.csv"),
         fill_log_path=os.getenv("FILL_LOG_PATH", "logs/paper_validation/fills.csv"),
         daily_snapshot_path=os.getenv("DAILY_SNAPSHOT_PATH", "logs/paper_validation/daily_snapshot.csv"),
+        max_notional_per_order_usd=_get_float("MAX_NOTIONAL_PER_ORDER_USD", 10000.0),
+        max_consecutive_losses=int(os.getenv("MAX_CONSECUTIVE_LOSSES", "3")),
+        max_data_staleness_minutes=int(os.getenv("MAX_DATA_STALENESS_MINUTES", "1440")),
     )
