@@ -13,7 +13,7 @@ python3 -m venv .venv
 pip install -r requirements.txt  # if you have one
 ```
 
-If you do not have a single `requirements.txt`, install the packages your project uses (for example: `pandas`, `numpy`, `flask`, `gunicorn`, `joblib`, `xgboost`, `lumibot`, `alpaca-trade-api`, `python-dotenv`, `transformers`, `torch`).
+If you do not have a single `requirements.txt`, install the packages your project uses (for example: `pandas`, `numpy`, `flask`, `gunicorn`, `joblib`, `xgboost`, `lumibot`, `alpaca-py`, `python-dotenv`, `transformers`, `torch`).
 
 ## 2) Place environment file
 

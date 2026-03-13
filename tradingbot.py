@@ -6,7 +6,6 @@ import logging
 import os
 from datetime import timedelta
 
-from lumibot.brokers import Alpaca
 from lumibot.traders import Trader
 
 from backtester import run_backtest
@@ -18,6 +17,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 def run_live() -> None:
+    from lumibot.brokers import Alpaca
+
     config = load_config()
     if config.paper:
         LOGGER.info("PAPER_TRADING=true, running live loop in paper mode.")

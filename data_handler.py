@@ -4,7 +4,9 @@ import os
 from typing import List
 
 import pandas as pd
-from alpaca_trade_api import REST
+from alpaca.data.historical import CryptoHistoricalDataClient, NewsClient, StockHistoricalDataClient
+from alpaca.data.requests import CryptoBarsRequest, NewsRequest, StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from dotenv import load_dotenv
 
 
@@ -28,20 +30,22 @@ class DataHandler:
             "API_SECRET", os.getenv("ALPACA_API_SECRET", "")
         )
         self.base_url = base_url or os.getenv("BASE_URL", "https://paper-api.alpaca.markets")
-        self._client: REST | None = None
+        self._stock_client: StockHistoricalDataClient | None = None
+        self._crypto_client: CryptoHistoricalDataClient | None = None
+        self._news_client: NewsClient | None = None
 
-    def _client_or_raise(self) -> REST:
+    def _client_or_raise(self) -> tuple[StockHistoricalDataClient, CryptoHistoricalDataClient, NewsClient]:
         if self.source != "alpaca":
             raise ValueError(f"Unsupported data source: {self.source}")
         if not self.api_key or not self.api_secret:
             raise ValueError("Missing Alpaca credentials for DataHandler.")
-        if self._client is None:
-            self._client = REST(
-                key_id=self.api_key,
-                secret_key=self.api_secret,
-                base_url=self.base_url,
-            )
-        return self._client
+        if self._stock_client is None:
+            self._stock_client = StockHistoricalDataClient(self.api_key, self.api_secret)
+        if self._crypto_client is None:
+            self._crypto_client = CryptoHistoricalDataClient(self.api_key, self.api_secret)
+        if self._news_client is None:
+            self._news_client = NewsClient(self.api_key, self.api_secret)
+        return self._stock_client, self._crypto_client, self._news_client
 
     def get_news_headlines(self, symbol: str, start: str, end: str, limit: int = 200) -> List[str]:
         records = self.get_news_records(symbol=symbol, start=start, end=end, limit=limit)
@@ -55,37 +59,28 @@ class DataHandler:
         limit: int = 200,
         max_pages: int = 50,
     ) -> List[dict]:
-        client = self._client_or_raise()
+        _, _, news_client = self._client_or_raise()
         all_records: List[dict] = []
         page_token = None
         pages = 0
 
         while pages < max_pages:
-            try:
-                news = client.get_news(
-                    symbol=symbol,
-                    start=start,
-                    end=end,
-                    limit=limit,
-                    page_token=page_token,
-                )
-            except TypeError:
-                # Older alpaca_trade_api versions do not support page_token.
-                news = client.get_news(
-                    symbol=symbol,
-                    start=start,
-                    end=end,
-                    limit=limit,
-                )
-                page_token = None
+            request = NewsRequest(
+                symbols=[symbol],
+                start=pd.Timestamp(start, tz="UTC").to_pydatetime(),
+                end=pd.Timestamp(end, tz="UTC").to_pydatetime(),
+                limit=limit,
+                page_token=page_token,
+            )
+            response = news_client.get_news(request)
             rows = []
-            for item in news:
-                raw = item.__dict__.get("_raw", {})
+            for item in response.data.get("news", []):
+                raw = item.model_dump()
                 if raw:
                     rows.append(raw)
             all_records.extend(rows)
 
-            page_token = getattr(news, "next_page_token", None)
+            page_token = response.next_page_token
             pages += 1
             if not page_token:
                 break
@@ -101,18 +96,20 @@ class DataHandler:
         adjustment: str = "raw",
         limit: int = 10000,
     ) -> pd.DataFrame:
-        client = self._client_or_raise()
+        stock_client, crypto_client, _ = self._client_or_raise()
         df = pd.DataFrame()
+        parsed_timeframe = self._parse_timeframe(timeframe)
 
         try:
-            bars = client.get_bars(
-                symbol=symbol,
-                timeframe=timeframe,
-                start=start,
-                end=end,
+            request = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=parsed_timeframe,
+                start=pd.Timestamp(start, tz="UTC").to_pydatetime(),
+                end=pd.Timestamp(end, tz="UTC").to_pydatetime(),
                 adjustment=adjustment,
                 limit=limit,
             )
+            bars = stock_client.get_stock_bars(request)
             df = bars.df.copy()
         except Exception:
             df = pd.DataFrame()
@@ -120,13 +117,14 @@ class DataHandler:
         if df.empty and self._is_crypto_symbol(symbol):
             crypto_symbol = self._normalize_crypto_symbol(symbol)
             try:
-                crypto_bars = client.get_crypto_bars(
-                    crypto_symbol,
-                    timeframe,
-                    start,
-                    end,
+                request = CryptoBarsRequest(
+                    symbol_or_symbols=crypto_symbol,
+                    timeframe=parsed_timeframe,
+                    start=pd.Timestamp(start, tz="UTC").to_pydatetime(),
+                    end=pd.Timestamp(end, tz="UTC").to_pydatetime(),
                     limit=limit,
                 )
+                crypto_bars = crypto_client.get_crypto_bars(request)
                 df = crypto_bars.df.copy()
             except Exception:
                 df = pd.DataFrame()
@@ -164,3 +162,30 @@ class DataHandler:
             base = normalized[:-3]
             return f"{base}/USD"
         return normalized
+
+    @staticmethod
+    def _parse_timeframe(timeframe: str) -> TimeFrame:
+        value = timeframe.strip()
+        if not value:
+            raise ValueError("Timeframe cannot be empty.")
+
+        digits = "".join(ch for ch in value if ch.isdigit())
+        unit_text = "".join(ch for ch in value if ch.isalpha()).lower()
+        amount = int(digits) if digits else 1
+
+        unit_map = {
+            "min": TimeFrameUnit.Minute,
+            "minute": TimeFrameUnit.Minute,
+            "minutes": TimeFrameUnit.Minute,
+            "hour": TimeFrameUnit.Hour,
+            "hours": TimeFrameUnit.Hour,
+            "day": TimeFrameUnit.Day,
+            "days": TimeFrameUnit.Day,
+            "week": TimeFrameUnit.Week,
+            "weeks": TimeFrameUnit.Week,
+            "month": TimeFrameUnit.Month,
+            "months": TimeFrameUnit.Month,
+        }
+        if unit_text not in unit_map:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+        return TimeFrame(amount, unit_map[unit_text])
