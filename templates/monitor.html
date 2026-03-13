@@ -16,7 +16,9 @@
       --warn: #f59e0b;
       --bad: #ef4444;
       --line: #374151;
+      --accent: #38bdf8;
     }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       background: radial-gradient(1200px 700px at 10% 0%, #1e293b, var(--bg));
@@ -24,19 +26,19 @@
       font-family: "Segoe UI", Tahoma, sans-serif;
     }
     .wrap {
-      max-width: 1200px;
+      max-width: 1380px;
       margin: 20px auto;
-      padding: 0 16px;
+      padding: 0 16px 30px;
     }
     .head {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
       gap: 12px;
-      margin-bottom: 14px;
+      margin-bottom: 16px;
     }
     .title {
-      font-size: 24px;
+      font-size: 26px;
       font-weight: 700;
       margin: 0;
     }
@@ -49,10 +51,87 @@
       border: 1px solid var(--line);
       text-transform: uppercase;
       letter-spacing: 0.06em;
+      display: inline-block;
     }
     .running { color: var(--ok); background: rgba(34,197,94,.12); }
     .stale { color: var(--bad); background: rgba(239,68,68,.15); }
     .no_data { color: var(--warn); background: rgba(245,158,11,.14); }
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .instance-card {
+      background: linear-gradient(180deg, var(--panel2), var(--panel));
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 12px 24px rgba(0,0,0,.18);
+    }
+    .instance-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .instance-name {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .mini {
+      background: rgba(15, 23, 42, .55);
+      border: 1px solid rgba(148, 163, 184, .14);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .mini .k {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .mini .v {
+      margin-top: 6px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .pnl-pos { color: var(--ok); }
+    .pnl-neg { color: var(--bad); }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .tab-button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: rgba(17, 24, 39, .85);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .tab-button.active {
+      background: rgba(56, 189, 248, .16);
+      border-color: rgba(56, 189, 248, .5);
+      color: #d9f5ff;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
     .cards {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -67,18 +146,37 @@
     }
     .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
     .card .v { margin-top: 6px; font-size: 20px; font-weight: 700; }
-    .pnl-pos { color: var(--ok); }
-    .pnl-neg { color: var(--bad); }
-    .panels {
+    .chart-grid {
       display: grid;
-      grid-template-columns: 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       gap: 12px;
+      margin-bottom: 12px;
+    }
+    .chart-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .chart-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0 0 8px 0;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    canvas {
+      width: 100%;
+      height: 170px;
+      background: #0b1220;
+      border-radius: 8px;
     }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 10px;
       overflow: hidden;
+      margin-bottom: 12px;
     }
     .panel h2 {
       margin: 0;
@@ -101,85 +199,102 @@
     }
     th { color: var(--muted); position: sticky; top: 0; background: #111827; }
     .empty { padding: 16px; color: var(--muted); font-size: 13px; }
-    .chart-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-    .chart-panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px;
-    }
-    .chart-title {
-      font-size: 13px;
-      color: var(--muted);
-      margin: 0 0 8px 0;
-      text-transform: uppercase;
-      letter-spacing: .05em;
-    }
-    canvas { width: 100%; height: 170px; background: #0b1220; border-radius: 8px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="head">
       <h1 class="title">Trading Bot Monitor</h1>
-      <div>
-        <span class="status {{ status }}">{{ status }}</span>
-        <span class="muted">updated {{ status_updated_utc }}</span>
-        <span class="muted">
-          {% if heartbeat_age_minutes is not none %}
-            | heartbeat age {{ "%.1f"|format(heartbeat_age_minutes) }} min
+      <div class="muted">updated {{ status_updated_utc }}</div>
+    </div>
+
+    <div class="overview-grid">
+      {% for instance in instances %}
+      <section class="instance-card">
+        <div class="instance-head">
+          <h2 class="instance-name">{{ instance.label }}</h2>
+          <span class="status {{ instance.status }}">{{ instance.status }}</span>
+        </div>
+        <div class="mini-grid">
+          <div class="mini">
+            <div class="k">Portfolio</div>
+            <div class="v">${{ "%.2f"|format(instance.portfolio_value) }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Day PnL</div>
+            <div class="v {% if instance.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">
+              ${{ "%.2f"|format(instance.day_pnl) }}
+            </div>
+          </div>
+          <div class="mini">
+            <div class="k">Action</div>
+            <div class="v">{{ instance.latest_action }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Fills Today</div>
+            <div class="v">{{ instance.fills_today }}</div>
+          </div>
+        </div>
+        <p class="muted" style="margin: 12px 0 0 0;">
+          heartbeat
+          {% if instance.heartbeat_age_minutes is not none %}
+            {{ "%.1f"|format(instance.heartbeat_age_minutes) }} min
           {% else %}
-            | heartbeat age n/a
+            n/a
           {% endif %}
-        </span>
-      </div>
+          | reason: {{ instance.latest_reason }}
+        </p>
+      </section>
+      {% endfor %}
     </div>
 
-    <div class="cards">
-      <div class="card"><div class="k">Portfolio Value</div><div class="v">${{ "%.2f"|format(portfolio_value) }}</div></div>
-      <div class="card"><div class="k">Day PnL</div><div class="v {% if day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(day_pnl) }}</div></div>
-      <div class="card"><div class="k">Position Qty</div><div class="v">{{ "%.4f"|format(position_qty) }}</div></div>
-      <div class="card"><div class="k">Latest Action</div><div class="v">{{ latest_action }}</div></div>
-      <div class="card"><div class="k">Action Source</div><div class="v">{{ latest_source }}</div></div>
-      <div class="card"><div class="k">Reason</div><div class="v" style="font-size:14px">{{ latest_reason }}</div></div>
-      <div class="card"><div class="k">Decisions Today</div><div class="v">{{ decisions_today }}</div></div>
-      <div class="card"><div class="k">Fills Today</div><div class="v">{{ fills_today }}</div></div>
+    <div class="tabs">
+      {% for instance in instances %}
+      <button class="tab-button {% if loop.first %}active{% endif %}" data-tab="{{ instance.label }}">{{ instance.label }}</button>
+      {% endfor %}
     </div>
 
-    <div class="chart-grid">
-      <div class="chart-panel">
-        <p class="chart-title">Portfolio Value Trend (last 30 snapshots)</p>
-        <canvas id="equityChart" width="560" height="170"></canvas>
+    {% for instance in instances %}
+    <section class="tab-content {% if loop.first %}active{% endif %}" id="tab-{{ instance.label }}">
+      <div class="cards">
+        <div class="card"><div class="k">Portfolio Value</div><div class="v">${{ "%.2f"|format(instance.portfolio_value) }}</div></div>
+        <div class="card"><div class="k">Day PnL</div><div class="v {% if instance.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(instance.day_pnl) }}</div></div>
+        <div class="card"><div class="k">Position Qty</div><div class="v">{{ "%.4f"|format(instance.position_qty) }}</div></div>
+        <div class="card"><div class="k">Latest Action</div><div class="v">{{ instance.latest_action }}</div></div>
+        <div class="card"><div class="k">Action Source</div><div class="v">{{ instance.latest_source }}</div></div>
+        <div class="card"><div class="k">Reason</div><div class="v" style="font-size:14px">{{ instance.latest_reason }}</div></div>
+        <div class="card"><div class="k">Decisions Today</div><div class="v">{{ instance.decisions_today }}</div></div>
+        <div class="card"><div class="k">Fills Today</div><div class="v">{{ instance.fills_today }}</div></div>
       </div>
-      <div class="chart-panel">
-        <p class="chart-title">Day PnL Trend (last 30 snapshots)</p>
-        <canvas id="pnlChart" width="560" height="170"></canvas>
-      </div>
-      <div class="chart-panel">
-        <p class="chart-title">Actions Last 7 Days</p>
-        <canvas id="actionsChart" width="560" height="170"></canvas>
-      </div>
-    </div>
 
-    <div class="panels">
+      <div class="chart-grid">
+        <div class="chart-panel">
+          <p class="chart-title">{{ instance.label }} Portfolio Value Trend</p>
+          <canvas id="equityChart-{{ instance.label }}" width="560" height="170"></canvas>
+        </div>
+        <div class="chart-panel">
+          <p class="chart-title">{{ instance.label }} Day PnL Trend</p>
+          <canvas id="pnlChart-{{ instance.label }}" width="560" height="170"></canvas>
+        </div>
+        <div class="chart-panel">
+          <p class="chart-title">{{ instance.label }} Actions Last 7 Days</p>
+          <canvas id="actionsChart-{{ instance.label }}" width="560" height="170"></canvas>
+        </div>
+      </div>
+
       <div class="panel">
-        <h2>Recent Decisions (last 15)</h2>
-        {% if recent_decisions_rows %}
+        <h2>{{ instance.label }} Recent Decisions (last 15)</h2>
+        {% if instance.recent_decisions_rows %}
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                {% for c in recent_decisions_columns %}<th>{{ c }}</th>{% endfor %}
+                {% for c in instance.recent_decisions_columns %}<th>{{ c }}</th>{% endfor %}
               </tr>
             </thead>
             <tbody>
-              {% for r in recent_decisions_rows %}
-              <tr>{% for c in recent_decisions_columns %}<td>{{ r[c] }}</td>{% endfor %}</tr>
+              {% for r in instance.recent_decisions_rows %}
+              <tr>{% for c in instance.recent_decisions_columns %}<td>{{ r[c] }}</td>{% endfor %}</tr>
               {% endfor %}
             </tbody>
           </table>
@@ -190,18 +305,18 @@
       </div>
 
       <div class="panel">
-        <h2>Recent Fills (last 15)</h2>
-        {% if recent_fills_rows %}
+        <h2>{{ instance.label }} Recent Fills (last 15)</h2>
+        {% if instance.recent_fills_rows %}
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                {% for c in recent_fills_columns %}<th>{{ c }}</th>{% endfor %}
+                {% for c in instance.recent_fills_columns %}<th>{{ c }}</th>{% endfor %}
               </tr>
             </thead>
             <tbody>
-              {% for r in recent_fills_rows %}
-              <tr>{% for c in recent_fills_columns %}<td>{{ r[c] }}</td>{% endfor %}</tr>
+              {% for r in instance.recent_fills_rows %}
+              <tr>{% for c in instance.recent_fills_columns %}<td>{{ r[c] }}</td>{% endfor %}</tr>
               {% endfor %}
             </tbody>
           </table>
@@ -210,25 +325,30 @@
         <div class="empty">No fill rows yet.</div>
         {% endif %}
       </div>
-    </div>
+    </section>
+    {% endfor %}
   </div>
+
   <script>
-    const equityPoints = {{ equity_points|tojson }};
-    const pnlPoints = {{ pnl_points|tojson }};
-    const actions7d = {{ actions_7d|tojson }};
+    const instances = {{ instances|tojson }};
 
     function drawLine(canvasId, points, lineColor) {
       const canvas = document.getElementById(canvasId);
       if (!canvas || !points || points.length < 2) return;
       const ctx = canvas.getContext("2d");
-      const w = canvas.width, h = canvas.height;
-      const min = Math.min(...points), max = Math.max(...points);
+      const w = canvas.width;
+      const h = canvas.height;
+      const min = Math.min(...points);
+      const max = Math.max(...points);
       const span = (max - min) || 1.0;
       const xStep = w / (points.length - 1);
-      ctx.clearRect(0,0,w,h);
+      ctx.clearRect(0, 0, w, h);
       ctx.strokeStyle = "#334155";
       ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(0,h-20); ctx.lineTo(w,h-20); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, h - 20);
+      ctx.lineTo(w, h - 20);
+      ctx.stroke();
       ctx.strokeStyle = lineColor;
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -244,10 +364,11 @@
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
-      const w = canvas.width, h = canvas.height;
+      const w = canvas.width;
+      const h = canvas.height;
       const max = Math.max(...values, 1);
       const barW = Math.floor((w - 40) / labels.length) - 12;
-      ctx.clearRect(0,0,w,h);
+      ctx.clearRect(0, 0, w, h);
       labels.forEach((label, i) => {
         const x = 20 + i * (barW + 12);
         const barH = Math.round((values[i] / max) * (h - 55));
@@ -264,14 +385,28 @@
       });
     }
 
-    drawLine("equityChart", equityPoints, "#22c55e");
-    drawLine("pnlChart", pnlPoints, "#60a5fa");
-    drawBars("actionsChart", ["buy", "sell", "hold", "flat"], [
-      actions7d.buy || 0,
-      actions7d.sell || 0,
-      actions7d.hold || 0,
-      actions7d.flat || 0
-    ]);
+    instances.forEach((instance) => {
+      drawLine(`equityChart-${instance.label}`, instance.equity_points || [], "#22c55e");
+      drawLine(`pnlChart-${instance.label}`, instance.pnl_points || [], "#60a5fa");
+      const actions = instance.actions_7d || {};
+      drawBars(`actionsChart-${instance.label}`, ["buy", "sell", "hold", "flat"], [
+        actions.buy || 0,
+        actions.sell || 0,
+        actions.hold || 0,
+        actions.flat || 0
+      ]);
+    });
+
+    const tabButtons = document.querySelectorAll(".tab-button");
+    const tabPanels = document.querySelectorAll(".tab-content");
+
+    tabButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.tab;
+        tabButtons.forEach((item) => item.classList.toggle("active", item === button));
+        tabPanels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${target}`));
+      });
+    });
   </script>
 </body>
 </html>

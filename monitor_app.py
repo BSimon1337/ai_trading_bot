@@ -9,9 +9,18 @@ from flask import Flask, render_template
 
 APP = Flask(__name__)
 
-DECISIONS_PATH = Path("logs/paper_validation/decisions.csv")
-FILLS_PATH = Path("logs/paper_validation/fills.csv")
-SNAPSHOT_PATH = Path("logs/paper_validation/daily_snapshot.csv")
+INSTANCE_PATHS = {
+    "SPY": {
+        "decisions": Path("logs/paper_validation/decisions.csv"),
+        "fills": Path("logs/paper_validation/fills.csv"),
+        "snapshot": Path("logs/paper_validation/daily_snapshot.csv"),
+    },
+    "BTCUSD": {
+        "decisions": Path("logs/paper_validation_btc/decisions.csv"),
+        "fills": Path("logs/paper_validation_btc/fills.csv"),
+        "snapshot": Path("logs/paper_validation_btc/daily_snapshot.csv"),
+    },
+}
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -37,10 +46,19 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _dashboard_data() -> dict[str, Any]:
-    decisions = _read_csv(DECISIONS_PATH)
-    fills = _read_csv(FILLS_PATH)
-    snapshot = _read_csv(SNAPSHOT_PATH)
+def _format_recent(df: pd.DataFrame, limit: int = 15) -> tuple[list[str], list[dict[str, Any]]]:
+    recent = df.tail(limit).copy() if not df.empty else pd.DataFrame()
+    if recent.empty:
+        return [], []
+    if "timestamp" in recent.columns and pd.api.types.is_datetime64_any_dtype(recent["timestamp"]):
+        recent["timestamp"] = recent["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    return list(recent.columns), recent.fillna("").to_dict(orient="records")
+
+
+def _instance_data(label: str, paths: dict[str, Path]) -> dict[str, Any]:
+    decisions = _read_csv(paths["decisions"])
+    fills = _read_csv(paths["fills"])
+    snapshot = _read_csv(paths["snapshot"])
 
     if not decisions.empty and "timestamp" in decisions.columns:
         decisions["timestamp"] = pd.to_datetime(decisions["timestamp"], errors="coerce", utc=True)
@@ -52,37 +70,14 @@ def _dashboard_data() -> dict[str, Any]:
     latest_decision = decisions.iloc[-1].to_dict() if not decisions.empty else {}
     latest_snapshot = snapshot.iloc[-1].to_dict() if not snapshot.empty else {}
 
-    latest_action = str(latest_decision.get("action", "n/a"))
-    latest_reason = str(latest_decision.get("reason", "n/a"))
-    latest_source = str(latest_decision.get("action_source", "n/a"))
-
-    portfolio_value = _to_float(latest_snapshot.get("portfolio_value", 0.0))
-    day_pnl = _to_float(latest_snapshot.get("day_pnl", 0.0))
-    position_qty = _to_float(latest_snapshot.get("position_qty", 0.0))
-
-    decisions_today = 0
-    fills_today = 0
-    now_utc_date = datetime.now(timezone.utc).date()
-    if not decisions.empty and "timestamp" in decisions.columns:
-        decisions_today = _to_int((decisions["timestamp"].dt.date == now_utc_date).sum())
-    if not fills.empty and "timestamp" in fills.columns:
-        fills_today = _to_int((fills["timestamp"].dt.date == now_utc_date).sum())
-
-    recent_decisions = decisions.tail(15).copy() if not decisions.empty else pd.DataFrame()
-    recent_fills = fills.tail(15).copy() if not fills.empty else pd.DataFrame()
-    recent_snapshot = snapshot.tail(30).copy() if not snapshot.empty else pd.DataFrame()
-
-    if not recent_decisions.empty:
-        recent_decisions["timestamp"] = recent_decisions["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-    if not recent_fills.empty:
-        recent_fills["timestamp"] = recent_fills["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-
     last_decision_ts = None
     heartbeat_age_minutes = None
     if not decisions.empty and "timestamp" in decisions.columns:
         last_decision_ts = decisions["timestamp"].iloc[-1]
         if pd.notna(last_decision_ts):
-            heartbeat_age_minutes = float((datetime.now(timezone.utc) - last_decision_ts.to_pydatetime()).total_seconds() / 60.0)
+            heartbeat_age_minutes = float(
+                (datetime.now(timezone.utc) - last_decision_ts.to_pydatetime()).total_seconds() / 60.0
+            )
 
     if last_decision_ts is None:
         status = "no_data"
@@ -91,14 +86,23 @@ def _dashboard_data() -> dict[str, Any]:
     else:
         status = "running"
 
-    pnl_points = []
-    equity_points = []
-    if not recent_snapshot.empty:
-        recent_snapshot["portfolio_value"] = pd.to_numeric(recent_snapshot["portfolio_value"], errors="coerce")
-        recent_snapshot["day_pnl"] = pd.to_numeric(recent_snapshot["day_pnl"], errors="coerce")
-        recent_snapshot = recent_snapshot.fillna(0)
-        equity_points = recent_snapshot["portfolio_value"].astype(float).tolist()
-        pnl_points = recent_snapshot["day_pnl"].astype(float).tolist()
+    now_utc_date = datetime.now(timezone.utc).date()
+    decisions_today = 0
+    fills_today = 0
+    if not decisions.empty and "timestamp" in decisions.columns:
+        decisions_today = _to_int((decisions["timestamp"].dt.date == now_utc_date).sum())
+    if not fills.empty and "timestamp" in fills.columns:
+        fills_today = _to_int((fills["timestamp"].dt.date == now_utc_date).sum())
+
+    equity_points: list[float] = []
+    pnl_points: list[float] = []
+    if not snapshot.empty:
+        snapshot = snapshot.copy()
+        snapshot["portfolio_value"] = pd.to_numeric(snapshot.get("portfolio_value"), errors="coerce")
+        snapshot["day_pnl"] = pd.to_numeric(snapshot.get("day_pnl"), errors="coerce")
+        snapshot = snapshot.fillna(0)
+        equity_points = snapshot["portfolio_value"].astype(float).tail(30).tolist()
+        pnl_points = snapshot["day_pnl"].astype(float).tail(30).tolist()
 
     actions_7d = {"buy": 0, "sell": 0, "hold": 0, "flat": 0}
     if not decisions.empty and "action" in decisions.columns and "timestamp" in decisions.columns:
@@ -108,25 +112,42 @@ def _dashboard_data() -> dict[str, Any]:
             for key in actions_7d:
                 actions_7d[key] = int(counts.get(key, 0))
 
+    decision_columns, decision_rows = _format_recent(decisions, limit=15)
+    fill_columns, fill_rows = _format_recent(fills, limit=15)
+
     return {
+        "label": label,
         "status": status,
-        "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "heartbeat_age_minutes": heartbeat_age_minutes,
-        "portfolio_value": portfolio_value,
-        "day_pnl": day_pnl,
-        "position_qty": position_qty,
-        "latest_action": latest_action,
-        "latest_reason": latest_reason,
-        "latest_source": latest_source,
+        "portfolio_value": _to_float(latest_snapshot.get("portfolio_value", 0.0)),
+        "day_pnl": _to_float(latest_snapshot.get("day_pnl", 0.0)),
+        "position_qty": _to_float(latest_snapshot.get("position_qty", 0.0)),
+        "latest_action": str(latest_decision.get("action", "n/a")),
+        "latest_reason": str(latest_decision.get("reason", "n/a")),
+        "latest_source": str(latest_decision.get("action_source", "n/a")),
         "decisions_today": decisions_today,
         "fills_today": fills_today,
-        "recent_decisions_columns": list(recent_decisions.columns),
-        "recent_decisions_rows": recent_decisions.fillna("").to_dict(orient="records"),
-        "recent_fills_columns": list(recent_fills.columns),
-        "recent_fills_rows": recent_fills.fillna("").to_dict(orient="records"),
         "equity_points": equity_points,
         "pnl_points": pnl_points,
         "actions_7d": actions_7d,
+        "recent_decisions_columns": decision_columns,
+        "recent_decisions_rows": decision_rows,
+        "recent_fills_columns": fill_columns,
+        "recent_fills_rows": fill_rows,
+    }
+
+
+def _dashboard_data() -> dict[str, Any]:
+    instances = [_instance_data(label, paths) for label, paths in INSTANCE_PATHS.items()]
+    available_instances = [item["label"] for item in instances]
+    active_label = available_instances[0] if available_instances else ""
+    active_instance = next((item for item in instances if item["label"] == active_label), {})
+
+    return {
+        "instances": instances,
+        "available_instances": available_instances,
+        "active_instance": active_instance,
+        "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     }
 
 
