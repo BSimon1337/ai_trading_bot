@@ -66,7 +66,7 @@ class DataHandler:
 
         while pages < max_pages:
             request = NewsRequest(
-                symbols=[symbol],
+                symbols=symbol,
                 start=pd.Timestamp(start, tz="UTC").to_pydatetime(),
                 end=pd.Timestamp(end, tz="UTC").to_pydatetime(),
                 limit=limit,
