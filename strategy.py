@@ -44,7 +44,13 @@ class SentimentMLStrategy(Strategy):
         max_data_staleness_minutes: int = 1440,
     ):
         self.symbol = symbol
-        self.sleeptime = "24H"
+        self.is_crypto = self._is_crypto_symbol(symbol)
+        if self.is_crypto:
+            self.set_market("24/7")
+            self.sleeptime = "15M"
+        else:
+            self.set_market("NASDAQ")
+            self.sleeptime = "24H"
         self.cash_at_risk = cash_at_risk
         self.sentiment_probability_threshold = sentiment_probability_threshold
         self.slippage_bps = slippage_bps
@@ -81,6 +87,13 @@ class SentimentMLStrategy(Strategy):
         self._last_features_timestamp = None
 
         self._ensure_log_files()
+
+    @staticmethod
+    def _is_crypto_symbol(symbol: str) -> bool:
+        normalized = str(symbol).upper().replace("-", "/")
+        if "/" in normalized:
+            return True
+        return normalized.endswith("USD") and len(normalized) > 3
 
     def _ensure_csv_file(self, path: Path, headers: list[str]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
