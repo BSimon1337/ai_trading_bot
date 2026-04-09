@@ -41,15 +41,15 @@ description: "Task list for Modular Multi-Asset Trading Bot implementation"
 
 **Critical**: No user story work should begin until this phase is complete
 
-- [ ] T005 Implement centralized environment-backed settings loading in `tradingbot/config/settings.py`
-- [ ] T006 [P] Implement execution mode and two-step live safeguard validation in `tradingbot/execution/safeguards.py`
-- [ ] T007 [P] Implement shared execution logging helpers for decisions, fills, and run-mode events in `tradingbot/execution/logging.py`
-- [ ] T008 [P] Implement risk sizing and guardrail primitives in `tradingbot/risk/sizing.py`
-- [ ] T009 Implement broker/runtime wiring for Lumibot and Alpaca access in `tradingbot/execution/broker.py`
-- [ ] T010 Implement main app routing entrypoint for `backtest`, `paper`, and `live` modes in `tradingbot/app/main.py`
-- [ ] T011 Update legacy imports in `tradingbot.py` to delegate to `tradingbot/app/main.py`
-- [ ] T012 Add smoke coverage for backtest entrypoint routing in `tests/smoke/test_backtest_entrypoint.py`
-- [ ] T013 Add smoke coverage for paper/live guardrail enforcement in `tests/smoke/test_paper_mode_guardrails.py`
+- [x] T005 Implement centralized environment-backed settings loading in `tradingbot/config/settings.py`
+- [x] T006 [P] Implement execution mode and two-step live safeguard validation in `tradingbot/execution/safeguards.py`
+- [x] T007 [P] Implement shared execution logging helpers for decisions, fills, and run-mode events in `tradingbot/execution/logging.py`
+- [x] T008 [P] Implement risk sizing and guardrail primitives in `tradingbot/risk/sizing.py`
+- [x] T009 Implement broker/runtime wiring for Lumibot and Alpaca access in `tradingbot/execution/broker.py`
+- [x] T010 Implement main app routing entrypoint for `backtest`, `paper`, and `live` modes in `tradingbot/app/main.py`
+- [x] T011 Update legacy imports in `tradingbot.py` to delegate to `tradingbot/app/main.py`
+- [x] T012 Add smoke coverage for backtest entrypoint routing in `tests/smoke/test_backtest_entrypoint.py`
+- [x] T013 Add smoke coverage for paper/live guardrail enforcement in `tests/smoke/test_paper_mode_guardrails.py`
 
 **Checkpoint**: Shared runtime, safeguards, and logging are ready for story implementation
 
