@@ -63,18 +63,18 @@ description: "Task list for Modular Multi-Asset Trading Bot implementation"
 
 ### Tests for User Story 1
 
-- [ ] T014 [P] [US1] Add unit coverage for extracted signal decision helpers in `tests/unit/test_signal_logic.py`
-- [ ] T015 [P] [US1] Add unit coverage for extracted position sizing helpers in `tests/unit/test_position_sizing.py`
+- [x] T014 [P] [US1] Add unit coverage for extracted signal decision helpers in `tests/unit/test_signal_logic.py`
+- [x] T015 [P] [US1] Add unit coverage for extracted position sizing helpers in `tests/unit/test_position_sizing.py`
 
 ### Implementation for User Story 1
 
-- [ ] T016 [P] [US1] Move configuration model and loader logic from `config.py` into `tradingbot/config/settings.py`
-- [ ] T017 [P] [US1] Move news/data access logic from `data_handler.py` into `tradingbot/data/news.py`
-- [ ] T018 [P] [US1] Move sentiment scoring helpers from `finbert_utils.py` into `tradingbot/sentiment/scoring.py`
-- [ ] T019 [P] [US1] Move risk dataclasses and calculations from `portfolio.py` into `tradingbot/risk/sizing.py`
-- [ ] T020 [US1] Extract pure signal-generation helpers from `strategy.py` into `tradingbot/strategy/signals.py`
-- [ ] T021 [US1] Rebuild the Lumibot strategy adapter in `tradingbot/strategy/lumibot_strategy.py` using the new config, data, sentiment, and risk modules
-- [ ] T022 [US1] Update legacy compatibility imports in `config.py`, `data_handler.py`, `finbert_utils.py`, `portfolio.py`, and `strategy.py` to point at the new package modules
+- [x] T016 [P] [US1] Move configuration model and loader logic from `config.py` into `tradingbot/config/settings.py`
+- [x] T017 [P] [US1] Move news/data access logic from `data_handler.py` into `tradingbot/data/news.py`
+- [x] T018 [P] [US1] Move sentiment scoring helpers from `finbert_utils.py` into `tradingbot/sentiment/scoring.py`
+- [x] T019 [P] [US1] Move risk dataclasses and calculations from `portfolio.py` into `tradingbot/risk/sizing.py`
+- [x] T020 [US1] Extract pure signal-generation helpers from `strategy.py` into `tradingbot/strategy/signals.py`
+- [x] T021 [US1] Rebuild the Lumibot strategy adapter in `tradingbot/strategy/lumibot_strategy.py` using the new config, data, sentiment, and risk modules
+- [x] T022 [US1] Update legacy compatibility imports in `config.py`, `data_handler.py`, `finbert_utils.py`, `portfolio.py`, and `strategy.py` to point at the new package modules
 
 **Checkpoint**: The codebase is modularized into the requested functional areas and can be reasoned about as separate components
 
