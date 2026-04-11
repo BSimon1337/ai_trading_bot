@@ -98,7 +98,13 @@ def _instance_data(label: str, paths: dict[str, Path]) -> dict[str, Any]:
                 (datetime.now(timezone.utc) - last_decision_ts.to_pydatetime()).total_seconds() / 60.0
             )
 
-    if last_decision_ts is None:
+    if latest_mode == "blocked-live":
+        status = "blocked_live"
+    elif latest_mode == "active-live":
+        status = "live"
+    elif latest_mode == "paper":
+        status = "paper"
+    elif last_decision_ts is None:
         status = "no_data"
     elif heartbeat_age_minutes is not None and heartbeat_age_minutes > 180:
         status = "stale"

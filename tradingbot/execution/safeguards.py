@@ -38,6 +38,9 @@ def resolve_runtime_state(config: BotConfig, requested_mode: str) -> RuntimeStat
             confirmation_matched=False,
         )
 
+    if not config.api_key or not config.api_secret:
+        raise RuntimeGuardrailError("Live trading is blocked. Alpaca credentials are required.")
+
     confirmation_matched = config.live_run_confirmation == config.live_confirmation_token
     if not config.live_trading_enabled:
         raise RuntimeGuardrailError(

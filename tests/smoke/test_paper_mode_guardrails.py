@@ -83,6 +83,65 @@ def test_live_command_blocks_when_live_flags_missing(monkeypatch):
     assert "LIVE_TRADING_ENABLED" in observed["reason"]
 
 
+def test_live_command_blocks_when_confirmation_missing(monkeypatch):
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(app_main, "setup_logging", lambda: None)
+    monkeypatch.setattr(
+        app_main,
+        "load_config",
+        lambda: _config(paper=False, live_trading_enabled=True, live_run_confirmation=""),
+    )
+    monkeypatch.setattr(app_main, "ensure_runtime_logs", lambda paths: None)
+    monkeypatch.setattr(
+        app_main,
+        "log_run_event",
+        lambda paths, mode, result, reason: observed.update(mode=mode, result=result, reason=reason),
+    )
+
+    exit_code = app_main.main(["--mode", "live"])
+
+    assert exit_code == 2
+    assert observed["mode"] == "blocked-live"
+    assert observed["result"] == "blocked"
+    assert "LIVE_RUN_CONFIRMATION" in observed["reason"]
+
+
+def test_live_command_uses_active_live_event_after_two_step_gate(monkeypatch):
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(app_main, "setup_logging", lambda: None)
+    monkeypatch.setattr(
+        app_main,
+        "load_config",
+        lambda: _config(
+            paper=False,
+            live_trading_enabled=True,
+            live_run_confirmation="CONFIRM",
+            live_confirmation_token="CONFIRM",
+        ),
+    )
+    monkeypatch.setattr(app_main, "ensure_runtime_logs", lambda paths: None)
+    monkeypatch.setattr(
+        app_main,
+        "log_run_event",
+        lambda paths, mode, result, reason: observed.update(mode=mode, result=result, reason=reason),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_run_live_loop",
+        lambda config, runtime_state=None: observed.update(ran=True, runtime_state=runtime_state),
+    )
+
+    exit_code = app_main.main(["--mode", "live"])
+
+    assert exit_code == 0
+    assert observed["mode"] == "active-live"
+    assert observed["result"] == "started"
+    assert observed["ran"] is True
+    assert observed["runtime_state"].execution_mode == "live"
+
+
 def test_live_command_preserves_multi_symbol_paper_config(monkeypatch):
     observed: dict[str, object] = {}
 

@@ -111,16 +111,16 @@ description: "Task list for Modular Multi-Asset Trading Bot implementation"
 
 ### Tests for User Story 3
 
-- [ ] T030 [P] [US3] Add smoke scenarios for missing persistent live flag and missing per-run confirmation in `tests/smoke/test_paper_mode_guardrails.py`
+- [x] T030 [P] [US3] Add smoke scenarios for missing persistent live flag and missing per-run confirmation in `tests/smoke/test_paper_mode_guardrails.py`
 
 ### Implementation for User Story 3
 
-- [ ] T031 [P] [US3] Add live-mode credential and safeguard validation in `tradingbot/execution/safeguards.py`
-- [ ] T032 [P] [US3] Add Alpaca live broker construction path in `tradingbot/execution/broker.py`
-- [ ] T033 [US3] Implement guarded live runtime entrypoint in `tradingbot/app/live.py`
-- [ ] T034 [US3] Update `tradingbot/app/main.py` to enforce the two-step live gate before live execution
-- [ ] T035 [US3] Record explicit blocked-live and active-live events in `tradingbot/execution/logging.py`
-- [ ] T036 [US3] Update `monitor_app.py` to surface blocked-live versus active-live status clearly
+- [x] T031 [P] [US3] Add live-mode credential and safeguard validation in `tradingbot/execution/safeguards.py`
+- [x] T032 [P] [US3] Add Alpaca live broker construction path in `tradingbot/execution/broker.py`
+- [x] T033 [US3] Implement guarded live runtime entrypoint in `tradingbot/app/live.py`
+- [x] T034 [US3] Update `tradingbot/app/main.py` to enforce the two-step live gate before live execution
+- [x] T035 [US3] Record explicit blocked-live and active-live events in `tradingbot/execution/logging.py`
+- [x] T036 [US3] Update `monitor_app.py` to surface blocked-live versus active-live status clearly
 
 **Checkpoint**: Live trading is autonomous after explicit enablement, but accidental live execution remains blocked
 

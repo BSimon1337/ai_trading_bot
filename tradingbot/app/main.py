@@ -77,11 +77,12 @@ def main(argv: list[str] | None = None) -> int:
         LOGGER.error(str(exc))
         return 2
 
-    log_run_event(paths, mode=runtime_state.execution_mode, result="started", reason="runtime started")
+    event_mode = "active-live" if runtime_state.execution_mode == "live" else runtime_state.execution_mode
+    log_run_event(paths, mode=event_mode, result="started", reason="runtime started")
     try:
         _run_live_loop(config, runtime_state)
     except Exception as exc:
-        log_run_event(paths, mode=runtime_state.execution_mode, result="failed", reason=str(exc))
+        log_run_event(paths, mode=event_mode, result="failed", reason=str(exc))
         raise
     return 0
 
