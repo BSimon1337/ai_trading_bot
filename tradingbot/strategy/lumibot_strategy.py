@@ -73,6 +73,7 @@ class SentimentMLStrategy(Strategy):
         self.max_consecutive_losses = max_consecutive_losses
         self.max_data_staleness_minutes = max_data_staleness_minutes
         self._model = None
+        self._model_load_failed = False
 
         limits = RiskLimits(
             max_position_pct=max_position_pct,
@@ -238,13 +239,25 @@ class SentimentMLStrategy(Strategy):
     def _load_model_if_needed(self):
         if not self.use_model_signal:
             return None
+        if self._model_load_failed:
+            return None
         if self._model is not None:
             return self._model
         model_file = Path(self.model_path)
         if not model_file.exists():
             LOGGER.warning("Model not found at %s; falling back to sentiment rule.", self.model_path)
+            self._model_load_failed = True
             return None
-        self._model = joblib.load(model_file)
+        try:
+            self._model = joblib.load(model_file)
+        except Exception as exc:
+            LOGGER.warning(
+                "Model load failed at %s; falling back to sentiment rule. Error: %s",
+                self.model_path,
+                exc,
+            )
+            self._model_load_failed = True
+            return None
         LOGGER.info("Loaded model signal from %s", self.model_path)
         return self._model
 

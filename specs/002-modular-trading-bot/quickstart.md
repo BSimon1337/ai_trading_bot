@@ -33,6 +33,8 @@ Required categories:
 1. Confirm Python 3.10 is active for the project environment.
 2. Set paper mode and provide Alpaca paper credentials.
 3. Run the backtest entrypoint against a short historical window.
+   - Preferred modular path: `python -m tradingbot.app.main --mode backtest --quick-backtest --quick-days 10`
+   - Compatibility path: `python tradingbot.py --mode backtest --quick-backtest --quick-days 10`
 4. Run the paper-trading entrypoint and confirm:
    - decisions are logged
    - fills or blocked actions are logged
@@ -52,6 +54,14 @@ pytest tests/smoke/test_paper_mode_guardrails.py
 ## Operational Checks
 
 - Verify decision logs include no-trade and blocked-trade outcomes
+- Verify backtest runs write a `mode=backtest` completion decision record
 - Verify fill logs remain empty for blocked live runs
 - Verify paper runs still produce operator-visible activity
 - Verify daily trading runs complete within the planned performance budget
+
+## Validation Notes
+
+- 2026-04-11: `python -m pytest tests/unit/test_signal_logic.py tests/unit/test_position_sizing.py tests/smoke/test_backtest_entrypoint.py tests/smoke/test_paper_mode_guardrails.py` passed with 15 tests and 1 warning on Python 3.13.1 after installing `pytest==8.3.5` in the active user environment.
+- 2026-04-11: mocked paper startup routing completed in 0.0113 seconds, within the 30-second startup preflight target.
+- 2026-04-11: dashboard data contract check passed for `latest_mode=paper`, `latest_asset_class=stock`, and `status=paper`; local Flask import was stubbed because Flask is not installed in the active interpreter.
+- 2026-04-11: full daily trading runtime against live market dependencies was not measured in this environment; use a paper run with configured symbols to validate the 60-second daily decision-cycle target before live deployment.

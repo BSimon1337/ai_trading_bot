@@ -36,7 +36,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _run_backtest(config: BotConfig, quick_backtest: bool, quick_days: int) -> None:
-    from backtester import run_backtest
+    from tradingbot.app.backtest import run_backtest
 
     if quick_backtest:
         window_days = max(2, quick_days)

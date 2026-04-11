@@ -64,3 +64,45 @@ def test_backtest_entrypoint_routes_quick_window(monkeypatch):
     assert captured["quick_backtest"] is True
     assert captured["quick_days"] == 5
     assert isinstance(captured["config"], BotConfig)
+
+
+def test_backtest_entrypoint_uses_modular_runner(monkeypatch):
+    from tradingbot.app import backtest as backtest_app
+
+    captured: dict[str, object] = {}
+    config = _config()
+
+    monkeypatch.setattr(backtest_app, "setup_logging", lambda: None)
+    monkeypatch.setattr(backtest_app, "set_reproducible_seed", lambda seed: captured.update(seed=seed))
+    monkeypatch.setattr(backtest_app, "_record_backtest_summary", lambda config, results: captured.update(summary=True, results=results))
+
+    class FakeStrategy:
+        broker = object()
+        _stats = None
+
+    class FakeSentimentMLStrategy:
+        @staticmethod
+        def run_backtest(*args, **kwargs):
+            captured["parameters"] = kwargs["parameters"]
+            return {"total_return": 0.01}, FakeStrategy()
+
+    class FakeYahooDataBacktesting:
+        pass
+
+    import sys
+    import types
+
+    fake_lumibot = types.ModuleType("lumibot.backtesting")
+    fake_lumibot.YahooDataBacktesting = FakeYahooDataBacktesting
+    monkeypatch.setitem(sys.modules, "lumibot.backtesting", fake_lumibot)
+
+    fake_strategy = types.ModuleType("strategy")
+    fake_strategy.SentimentMLStrategy = FakeSentimentMLStrategy
+    monkeypatch.setitem(sys.modules, "strategy", fake_strategy)
+
+    results = backtest_app.run_backtest(config, print_summary=False)
+
+    assert results == {"total_return": 0.01}
+    assert captured["seed"] == 42
+    assert captured["summary"] is True
+    assert captured["parameters"]["mode"] == "backtest"

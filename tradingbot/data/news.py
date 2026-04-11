@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, List
 
@@ -9,6 +10,9 @@ try:
 except ImportError:  # pragma: no cover - optional in bare environments
     def load_dotenv(*args, **kwargs) -> bool:
         return False
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _load_env_files() -> None:
@@ -77,7 +81,17 @@ class DataHandler:
                 limit=limit,
                 page_token=page_token,
             )
-            response = news_client.get_news(request)
+            try:
+                response = news_client.get_news(request)
+            except Exception as exc:
+                LOGGER.warning(
+                    "Alpaca news fetch failed for %s from %s to %s; using neutral sentiment fallback. Error: %s",
+                    symbol,
+                    start,
+                    end,
+                    exc,
+                )
+                break
             rows = []
             for item in response.data.get("news", []):
                 raw = item.model_dump()

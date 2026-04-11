@@ -134,15 +134,15 @@ description: "Task list for Modular Multi-Asset Trading Bot implementation"
 
 ### Tests for User Story 4
 
-- [ ] T037 [P] [US4] Extend backtest smoke coverage for modular app routing in `tests/smoke/test_backtest_entrypoint.py`
+- [x] T037 [P] [US4] Extend backtest smoke coverage for modular app routing in `tests/smoke/test_backtest_entrypoint.py`
 
 ### Implementation for User Story 4
 
-- [ ] T038 [P] [US4] Implement backtest runtime entrypoint in `tradingbot/app/backtest.py`
-- [ ] T039 [P] [US4] Update `backtester.py` to delegate through `tradingbot/app/backtest.py`
-- [ ] T040 [US4] Ensure signal, risk, and logging modules are reused in backtest mode from `tradingbot/strategy/signals.py`, `tradingbot/risk/sizing.py`, and `tradingbot/execution/logging.py`
-- [ ] T041 [US4] Update decision and snapshot outputs for backtest review in `tradingbot/execution/logging.py`
-- [ ] T042 [US4] Refresh operator review guidance in `specs/002-modular-trading-bot/quickstart.md`
+- [x] T038 [P] [US4] Implement backtest runtime entrypoint in `tradingbot/app/backtest.py`
+- [x] T039 [P] [US4] Update `backtester.py` to delegate through `tradingbot/app/backtest.py`
+- [x] T040 [US4] Ensure signal, risk, and logging modules are reused in backtest mode from `tradingbot/strategy/signals.py`, `tradingbot/risk/sizing.py`, and `tradingbot/execution/logging.py`
+- [x] T041 [US4] Update decision and snapshot outputs for backtest review in `tradingbot/execution/logging.py`
+- [x] T042 [US4] Refresh operator review guidance in `specs/002-modular-trading-bot/quickstart.md`
 
 **Checkpoint**: Backtesting reuses the modular trading flow and produces reviewable operator evidence
 
@@ -152,11 +152,11 @@ description: "Task list for Modular Multi-Asset Trading Bot implementation"
 
 **Purpose**: Finalize migration quality, runtime checks, and documentation
 
-- [ ] T043 [P] Verify all credentials and mode switches are environment-variable driven in `tradingbot/config/settings.py`, `tradingbot/execution/safeguards.py`, and `tradingbot/app/main.py`
-- [ ] T044 [P] Run and stabilize `pytest` suites in `tests/unit/test_signal_logic.py`, `tests/unit/test_position_sizing.py`, `tests/smoke/test_backtest_entrypoint.py`, and `tests/smoke/test_paper_mode_guardrails.py`
-- [ ] T045 Measure startup and daily trading runtime against the plan targets and record results in `specs/002-modular-trading-bot/quickstart.md`
-- [ ] T046 Remove obsolete root-level logic after compatibility delegation is proven in `config.py`, `data_handler.py`, `finbert_utils.py`, `portfolio.py`, `strategy.py`, `backtester.py`, and `tradingbot.py`
-- [ ] T047 Validate dashboard/log outputs against the contract in `specs/002-modular-trading-bot/contracts/cli-contract.md`
+- [x] T043 [P] Verify all credentials and mode switches are environment-variable driven in `tradingbot/config/settings.py`, `tradingbot/execution/safeguards.py`, and `tradingbot/app/main.py`
+- [x] T044 [P] Run and stabilize `pytest` suites in `tests/unit/test_signal_logic.py`, `tests/unit/test_position_sizing.py`, `tests/smoke/test_backtest_entrypoint.py`, and `tests/smoke/test_paper_mode_guardrails.py`
+- [x] T045 Measure startup and daily trading runtime against the plan targets and record results in `specs/002-modular-trading-bot/quickstart.md`
+- [x] T046 Remove obsolete root-level logic after compatibility delegation is proven in `config.py`, `data_handler.py`, `finbert_utils.py`, `portfolio.py`, `strategy.py`, `backtester.py`, and `tradingbot.py`
+- [x] T047 Validate dashboard/log outputs against the contract in `specs/002-modular-trading-bot/contracts/cli-contract.md`
 
 ---
 
