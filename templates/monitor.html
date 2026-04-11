@@ -54,6 +54,9 @@
       display: inline-block;
     }
     .running { color: var(--ok); background: rgba(34,197,94,.12); }
+    .paper { color: var(--accent); background: rgba(56,189,248,.12); }
+    .live { color: var(--ok); background: rgba(34,197,94,.16); }
+    .blocked_live { color: var(--bad); background: rgba(239,68,68,.18); }
     .stale { color: var(--bad); background: rgba(239,68,68,.15); }
     .no_data { color: var(--warn); background: rgba(245,158,11,.14); }
     .overview-grid {
@@ -231,6 +234,10 @@
             <div class="v">{{ instance.latest_action }}</div>
           </div>
           <div class="mini">
+            <div class="k">Mode / Asset</div>
+            <div class="v">{{ instance.latest_mode }} / {{ instance.latest_asset_class }}</div>
+          </div>
+          <div class="mini">
             <div class="k">Fills Today</div>
             <div class="v">{{ instance.fills_today }}</div>
           </div>
@@ -261,6 +268,8 @@
         <div class="card"><div class="k">Day PnL</div><div class="v {% if instance.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(instance.day_pnl) }}</div></div>
         <div class="card"><div class="k">Position Qty</div><div class="v">{{ "%.4f"|format(instance.position_qty) }}</div></div>
         <div class="card"><div class="k">Latest Action</div><div class="v">{{ instance.latest_action }}</div></div>
+        <div class="card"><div class="k">Mode</div><div class="v">{{ instance.latest_mode }}</div></div>
+        <div class="card"><div class="k">Asset Class</div><div class="v">{{ instance.latest_asset_class }}</div></div>
         <div class="card"><div class="k">Action Source</div><div class="v">{{ instance.latest_source }}</div></div>
         <div class="card"><div class="k">Reason</div><div class="v" style="font-size:14px">{{ instance.latest_reason }}</div></div>
         <div class="card"><div class="k">Decisions Today</div><div class="v">{{ instance.decisions_today }}</div></div>
