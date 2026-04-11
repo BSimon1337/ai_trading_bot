@@ -52,7 +52,7 @@ def test_live_command_runs_paper_mode_without_live_flags(monkeypatch):
     monkeypatch.setattr(app_main, "load_config", lambda: _config(paper=True))
     monkeypatch.setattr(app_main, "ensure_runtime_logs", lambda paths: None)
     monkeypatch.setattr(app_main, "log_run_event", lambda paths, mode, result, reason: observed.update(mode=mode, result=result))
-    monkeypatch.setattr(app_main, "_run_live_loop", lambda config: observed.update(ran=True, config=config))
+    monkeypatch.setattr(app_main, "_run_live_loop", lambda config, runtime_state=None: observed.update(ran=True, config=config, runtime_state=runtime_state))
 
     exit_code = app_main.main(["--mode", "live"])
 
@@ -60,6 +60,7 @@ def test_live_command_runs_paper_mode_without_live_flags(monkeypatch):
     assert observed["mode"] == "paper"
     assert observed["result"] == "started"
     assert observed["ran"] is True
+    assert observed["runtime_state"].execution_mode == "paper"
 
 
 def test_live_command_blocks_when_live_flags_missing(monkeypatch):
@@ -80,3 +81,19 @@ def test_live_command_blocks_when_live_flags_missing(monkeypatch):
     assert observed["mode"] == "blocked-live"
     assert observed["result"] == "blocked"
     assert "LIVE_TRADING_ENABLED" in observed["reason"]
+
+
+def test_live_command_preserves_multi_symbol_paper_config(monkeypatch):
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(app_main, "setup_logging", lambda: None)
+    monkeypatch.setattr(app_main, "load_config", lambda: _config(paper=True, symbol="SPY", symbols=("SPY", "BTCUSD")))
+    monkeypatch.setattr(app_main, "ensure_runtime_logs", lambda paths: None)
+    monkeypatch.setattr(app_main, "log_run_event", lambda paths, mode, result, reason: None)
+    monkeypatch.setattr(app_main, "_run_live_loop", lambda config, runtime_state=None: observed.update(symbols=config.symbols, runtime_state=runtime_state))
+
+    exit_code = app_main.main(["--mode", "live"])
+
+    assert exit_code == 0
+    assert observed["symbols"] == ("SPY", "BTCUSD")
+    assert observed["runtime_state"].execution_mode == "paper"

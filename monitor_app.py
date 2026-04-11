@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,22 @@ INSTANCE_PATHS = {
         "snapshot": Path("logs/paper_validation_btc/daily_snapshot.csv"),
     },
 }
+
+
+def _configured_instance_paths() -> dict[str, dict[str, Path]]:
+    symbols = [symbol.strip().upper() for symbol in os.getenv("SYMBOLS", "").split(",") if symbol.strip()]
+    if not symbols:
+        return INSTANCE_PATHS
+
+    paths: dict[str, dict[str, Path]] = {}
+    for symbol in symbols:
+        suffix = "" if symbol == "SPY" else f"_{symbol.lower().replace('/', '').replace('-', '')}"
+        paths[symbol] = {
+            "decisions": Path(f"logs/paper_validation{suffix}/decisions.csv"),
+            "fills": Path(f"logs/paper_validation{suffix}/fills.csv"),
+            "snapshot": Path(f"logs/paper_validation{suffix}/daily_snapshot.csv"),
+        }
+    return paths
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
@@ -69,6 +86,8 @@ def _instance_data(label: str, paths: dict[str, Path]) -> dict[str, Any]:
 
     latest_decision = decisions.iloc[-1].to_dict() if not decisions.empty else {}
     latest_snapshot = snapshot.iloc[-1].to_dict() if not snapshot.empty else {}
+    latest_mode = str(latest_decision.get("mode", "unknown"))
+    latest_asset_class = str(latest_decision.get("asset_class", "unknown"))
 
     last_decision_ts = None
     heartbeat_age_minutes = None
@@ -123,6 +142,8 @@ def _instance_data(label: str, paths: dict[str, Path]) -> dict[str, Any]:
         "day_pnl": _to_float(latest_snapshot.get("day_pnl", 0.0)),
         "position_qty": _to_float(latest_snapshot.get("position_qty", 0.0)),
         "latest_action": str(latest_decision.get("action", "n/a")),
+        "latest_mode": latest_mode,
+        "latest_asset_class": latest_asset_class,
         "latest_reason": str(latest_decision.get("reason", "n/a")),
         "latest_source": str(latest_decision.get("action_source", "n/a")),
         "decisions_today": decisions_today,
@@ -138,7 +159,7 @@ def _instance_data(label: str, paths: dict[str, Path]) -> dict[str, Any]:
 
 
 def _dashboard_data() -> dict[str, Any]:
-    instances = [_instance_data(label, paths) for label, paths in INSTANCE_PATHS.items()]
+    instances = [_instance_data(label, paths) for label, paths in _configured_instance_paths().items()]
     available_instances = [item["label"] for item in instances]
     active_label = available_instances[0] if available_instances else ""
     active_instance = next((item for item in instances if item["label"] == active_label), {})

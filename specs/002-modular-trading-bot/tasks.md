@@ -88,16 +88,16 @@ description: "Task list for Modular Multi-Asset Trading Bot implementation"
 
 ### Tests for User Story 2
 
-- [ ] T023 [P] [US2] Extend paper-mode guardrail smoke coverage for multi-asset settings in `tests/smoke/test_paper_mode_guardrails.py`
+- [x] T023 [P] [US2] Extend paper-mode guardrail smoke coverage for multi-asset settings in `tests/smoke/test_paper_mode_guardrails.py`
 
 ### Implementation for User Story 2
 
-- [ ] T024 [P] [US2] Add multi-symbol and asset-class configuration parsing in `tradingbot/config/settings.py`
-- [ ] T025 [P] [US2] Implement paper-mode execution runtime in `tradingbot/app/live.py`
-- [ ] T026 [US2] Update `tradingbot/execution/broker.py` to build Alpaca paper broker sessions from environment variables only
-- [ ] T027 [US2] Update `tradingbot/strategy/lumibot_strategy.py` to evaluate configured stock and crypto instruments within one workflow
-- [ ] T028 [US2] Update decision and fill log schema handling for mode and asset class in `tradingbot/execution/logging.py`
-- [ ] T029 [US2] Update operator dashboard parsing for paper-mode multi-asset visibility in `monitor_app.py`
+- [x] T024 [P] [US2] Add multi-symbol and asset-class configuration parsing in `tradingbot/config/settings.py`
+- [x] T025 [P] [US2] Implement paper-mode execution runtime in `tradingbot/app/live.py`
+- [x] T026 [US2] Update `tradingbot/execution/broker.py` to build Alpaca paper broker sessions from environment variables only
+- [x] T027 [US2] Update `tradingbot/strategy/lumibot_strategy.py` to evaluate configured stock and crypto instruments within one workflow
+- [x] T028 [US2] Update decision and fill log schema handling for mode and asset class in `tradingbot/execution/logging.py`
+- [x] T029 [US2] Update operator dashboard parsing for paper-mode multi-asset visibility in `monitor_app.py`
 
 **Checkpoint**: Paper trading works with configurable stock/crypto settings and operator-visible logs
 

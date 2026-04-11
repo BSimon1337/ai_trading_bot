@@ -47,6 +47,15 @@ def _get_symbols() -> tuple[str, ...]:
     return (os.getenv("SYMBOL", "SPY").strip().upper(),)
 
 
+def infer_asset_class(symbol: str) -> str:
+    normalized = symbol.upper().replace("-", "/")
+    if "/" in normalized:
+        return "crypto"
+    if normalized.endswith("USD") and len(normalized) > 3:
+        return "crypto"
+    return "stock"
+
+
 @dataclass(frozen=True)
 class BotConfig:
     api_key: str
@@ -99,9 +108,19 @@ class BotConfig:
         }
 
     @property
+    def asset_class(self) -> str:
+        return infer_asset_class(self.symbol)
+
+    @property
+    def asset_classes(self) -> dict[str, str]:
+        return {symbol: infer_asset_class(symbol) for symbol in self.symbols}
+
+    @property
     def strategy_parameters(self) -> dict[str, object]:
         return {
             "symbol": self.symbol,
+            "asset_class": self.asset_class,
+            "mode": "paper" if self.paper else "live",
             "cash_at_risk": self.cash_at_risk,
             "sentiment_probability_threshold": self.sentiment_probability_threshold,
             "max_position_pct": self.max_position_pct,

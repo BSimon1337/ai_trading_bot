@@ -23,6 +23,8 @@ class SentimentMLStrategy(Strategy):
     def initialize(
         self,
         symbol: str = "SPY",
+        asset_class: str | None = None,
+        mode: str = "paper",
         cash_at_risk: float = 0.20,
         sentiment_probability_threshold: float = 0.70,
         max_position_pct: float = 0.25,
@@ -45,6 +47,8 @@ class SentimentMLStrategy(Strategy):
         max_data_staleness_minutes: int = 1440,
     ):
         self.symbol = symbol
+        self.asset_class = asset_class or ("crypto" if self._is_crypto_symbol(symbol) else "stock")
+        self.mode = mode
         self.is_crypto = self._is_crypto_symbol(symbol)
         if self.is_crypto:
             self.set_market("24/7")
@@ -109,7 +113,9 @@ class SentimentMLStrategy(Strategy):
             self.decision_log_path,
             [
                 "timestamp",
+                "mode",
                 "symbol",
+                "asset_class",
                 "action",
                 "action_source",
                 "model_prob_up",
@@ -119,15 +125,28 @@ class SentimentMLStrategy(Strategy):
                 "portfolio_value",
                 "cash",
                 "reason",
+                "result",
             ],
         )
         self._ensure_csv_file(
             self.fill_log_path,
-            ["timestamp", "symbol", "side", "quantity", "order_id", "portfolio_value", "cash", "notional_usd"],
+            [
+                "timestamp",
+                "mode",
+                "symbol",
+                "asset_class",
+                "side",
+                "quantity",
+                "order_id",
+                "portfolio_value",
+                "cash",
+                "notional_usd",
+                "result",
+            ],
         )
         self._ensure_csv_file(
             self.daily_snapshot_path,
-            ["date", "symbol", "portfolio_value", "cash", "position_qty", "day_pnl"],
+            ["date", "mode", "symbol", "portfolio_value", "cash", "position_qty", "day_pnl"],
         )
 
     @staticmethod
@@ -178,6 +197,7 @@ class SentimentMLStrategy(Strategy):
             self.daily_snapshot_path,
             {
                 "date": str(now_date),
+                "mode": self.mode,
                 "symbol": self.symbol,
                 "portfolio_value": round(current, 6),
                 "cash": round(float(self.get_cash()), 6),
@@ -384,13 +404,16 @@ class SentimentMLStrategy(Strategy):
             self.fill_log_path,
             {
                 "timestamp": self.get_datetime().isoformat(),
+                "mode": self.mode,
                 "symbol": self.symbol,
+                "asset_class": self.asset_class,
                 "side": order_side,
                 "quantity": int(delta_qty),
                 "order_id": order_id,
                 "portfolio_value": round(portfolio_value, 6),
                 "cash": round(float(self.get_cash()), 6),
                 "notional_usd": round(order_notional, 6),
+                "result": "submitted",
             },
         )
         return {"executed": True, "reason": "submitted", "quantity": int(delta_qty), "order_id": order_id}
@@ -420,7 +443,9 @@ class SentimentMLStrategy(Strategy):
             self.decision_log_path,
             {
                 "timestamp": self.get_datetime().isoformat(),
+                "mode": self.mode,
                 "symbol": self.symbol,
+                "asset_class": self.asset_class,
                 "action": action,
                 "action_source": action_source,
                 "model_prob_up": "" if model_prob_up is None else round(model_prob_up, 6),
@@ -432,6 +457,7 @@ class SentimentMLStrategy(Strategy):
                 "portfolio_value": round(self._get_portfolio_value(), 6),
                 "cash": round(float(self.get_cash()), 6),
                 "reason": reason,
+                "result": "submitted" if quantity > 0 and action in {"buy", "sell"} else "blocked" if action == "hold" and reason.endswith("blocked") else "skipped",
             },
         )
 

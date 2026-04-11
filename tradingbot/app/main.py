@@ -6,7 +6,6 @@ from dataclasses import replace
 from datetime import timedelta
 
 from tradingbot.config.settings import BotConfig, load_config
-from tradingbot.execution.broker import build_alpaca_broker, build_trader
 from tradingbot.execution.logging import LogPaths, ensure_runtime_logs, log_run_event
 from tradingbot.execution.safeguards import RuntimeGuardrailError, resolve_runtime_state
 from utils import setup_logging
@@ -52,18 +51,12 @@ def _run_backtest(config: BotConfig, quick_backtest: bool, quick_days: int) -> N
     run_backtest(config, print_summary=quick_backtest)
 
 
-def _run_live_loop(config: BotConfig) -> None:
-    from strategy import SentimentMLStrategy
+def _run_live_loop(config: BotConfig, runtime_state=None) -> None:
+    from tradingbot.app.live import run_trading_loop
 
-    broker = build_alpaca_broker(config)
-    strategy = SentimentMLStrategy(
-        name="sentiment_ml_strategy",
-        broker=broker,
-        parameters=config.strategy_parameters,
-    )
-    trader = build_trader()
-    trader.add_strategy(strategy)
-    trader.run_all()
+    if runtime_state is None:
+        runtime_state = resolve_runtime_state(config, "live")
+    run_trading_loop(config, runtime_state)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -86,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
 
     log_run_event(paths, mode=runtime_state.execution_mode, result="started", reason="runtime started")
     try:
-        _run_live_loop(config)
+        _run_live_loop(config, runtime_state)
     except Exception as exc:
         log_run_event(paths, mode=runtime_state.execution_mode, result="failed", reason=str(exc))
         raise
