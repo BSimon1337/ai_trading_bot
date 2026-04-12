@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -21,11 +21,18 @@ class OfflineNewsFixture:
     records: tuple[OfflineNewsRecord, ...]
 
     def headlines_for(self, symbol: str, start: datetime, end: datetime) -> list[str]:
+        records = self.records_for(symbol, start, end)
+        return [record.headline for record in records]
+
+    def records_for(self, symbol: str, start: datetime, end: datetime) -> list[OfflineNewsRecord]:
         normalized_symbol = symbol.upper()
+        normalized_start = _ensure_timezone(start)
+        normalized_end = _ensure_timezone(end)
         return [
-            record.headline
+            record
             for record in self.records
-            if record.symbol.upper() == normalized_symbol and start <= record.published_at <= end
+            if record.symbol.upper() == normalized_symbol
+            and normalized_start <= _ensure_timezone(record.published_at) <= normalized_end
         ]
 
 
@@ -55,6 +62,22 @@ def load_offline_news_fixture(path: str | Path) -> OfflineNewsFixture:
         return OfflineNewsFixture(path=fixture_path, records=parse_offline_news_rows(rows))
 
 
+def load_offline_news_directory(directory: str | Path) -> OfflineNewsFixture:
+    fixture_dir = Path(directory)
+    records: list[OfflineNewsRecord] = []
+    if not fixture_dir.exists():
+        return OfflineNewsFixture(path=fixture_dir, records=())
+    for fixture_path in sorted(fixture_dir.glob("*.csv")):
+        records.extend(load_offline_news_fixture(fixture_path).records)
+    return OfflineNewsFixture(path=fixture_dir, records=tuple(records))
+
+
 def _parse_datetime(value: str) -> datetime:
     normalized = value.replace("Z", "+00:00")
     return datetime.fromisoformat(normalized)
+
+
+def _ensure_timezone(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value

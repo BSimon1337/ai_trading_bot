@@ -46,19 +46,19 @@
 
 ### Tests for User Story 1
 
-- [ ] T010 [P] [US1] Add readiness pass, warning, and fail unit tests in `tests/unit/test_preflight_readiness.py`
-- [ ] T011 [P] [US1] Add log-path readiness tests in `tests/unit/test_log_path_readiness.py`
-- [ ] T012 [P] [US1] Add preflight CLI smoke tests in `tests/smoke/test_preflight_entrypoint.py`
+- [x] T010 [P] [US1] Add readiness pass, warning, and fail unit tests in `tests/unit/test_preflight_readiness.py`
+- [x] T011 [P] [US1] Add log-path readiness tests in `tests/unit/test_log_path_readiness.py`
+- [x] T012 [P] [US1] Add preflight CLI smoke tests in `tests/smoke/test_preflight_entrypoint.py`
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Implement credential presence and symbol classification checks in `tradingbot/app/preflight.py`
-- [ ] T014 [US1] Implement log path writability and creatability checks in `tradingbot/app/preflight.py`
-- [ ] T015 [US1] Implement Alpaca trading, market data, and news probe checks with safe exception handling in `tradingbot/app/preflight.py`
-- [ ] T016 [US1] Implement live safeguard readiness checks using `tradingbot/execution/safeguards.py`
-- [ ] T017 [US1] Wire preflight mode output and exit codes into `tradingbot/app/main.py`
-- [ ] T018 [US1] Add preflight run event logging through `tradingbot/execution/logging.py`
-- [ ] T019 [US1] Update preflight pass, warning, and fail examples in `specs/003-preflight-offline-mode/quickstart.md`
+- [x] T013 [US1] Implement credential presence and symbol classification checks in `tradingbot/app/preflight.py`
+- [x] T014 [US1] Implement log path writability and creatability checks in `tradingbot/app/preflight.py`
+- [x] T015 [US1] Implement Alpaca trading, market data, and news probe checks with safe exception handling in `tradingbot/app/preflight.py`
+- [x] T016 [US1] Implement live safeguard readiness checks using `tradingbot/execution/safeguards.py`
+- [x] T017 [US1] Wire preflight mode output and exit codes into `tradingbot/app/main.py`
+- [x] T018 [US1] Add preflight run event logging through `tradingbot/execution/logging.py`
+- [x] T019 [US1] Update preflight pass, warning, and fail examples in `specs/003-preflight-offline-mode/quickstart.md`
 
 ---
 
@@ -70,18 +70,18 @@
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Add fixture parser and validation tests in `tests/unit/test_offline_news_fixtures.py`
-- [ ] T021 [P] [US2] Add offline-news backtest routing smoke coverage in `tests/smoke/test_backtest_entrypoint.py`
+- [x] T020 [P] [US2] Add fixture parser and validation tests in `tests/unit/test_offline_news_fixtures.py`
+- [x] T021 [P] [US2] Add offline-news backtest routing smoke coverage in `tests/smoke/test_backtest_entrypoint.py`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Implement local and cached news fixture loading in `tradingbot/data/offline_news.py`
-- [ ] T023 [US2] Add config and environment support for offline mode and fixture directory in `tradingbot/config/settings.py`
-- [ ] T024 [US2] Integrate offline fixture fallback into headline retrieval in `tradingbot/data/news.py`
-- [ ] T025 [US2] Record sentiment source values such as `external`, `local_fixture`, and `neutral_fallback` in `tradingbot/strategy/lumibot_strategy.py`
-- [ ] T026 [US2] Extend decision logging headers and append logic for sentiment source in `tradingbot/execution/logging.py`
-- [ ] T027 [US2] Add sanitized sample fixture documentation under `data/offline_news/`
-- [ ] T028 [US2] Update the offline backtest flow in `specs/003-preflight-offline-mode/quickstart.md`
+- [x] T022 [US2] Implement local and cached news fixture loading in `tradingbot/data/offline_news.py`
+- [x] T023 [US2] Add config and environment support for offline mode and fixture directory in `tradingbot/config/settings.py`
+- [x] T024 [US2] Integrate offline fixture fallback into headline retrieval in `tradingbot/data/news.py`
+- [x] T025 [US2] Record sentiment source values such as `external`, `local_fixture`, and `neutral_fallback` in `tradingbot/strategy/lumibot_strategy.py`
+- [x] T026 [US2] Extend decision logging headers and append logic for sentiment source in `tradingbot/execution/logging.py`
+- [x] T027 [US2] Add sanitized sample fixture documentation under `data/offline_news/`
+- [x] T028 [US2] Update the offline backtest flow in `specs/003-preflight-offline-mode/quickstart.md`
 
 ---
 

@@ -45,6 +45,8 @@ class SentimentMLStrategy(Strategy):
         max_notional_per_order_usd: float = 10000.0,
         max_consecutive_losses: int = 3,
         max_data_staleness_minutes: int = 1440,
+        offline_news_enabled: bool = False,
+        offline_news_dir: str = "data/offline_news",
     ):
         self.symbol = symbol
         self.asset_class = asset_class or ("crypto" if self._is_crypto_symbol(symbol) else "stock")
@@ -72,6 +74,8 @@ class SentimentMLStrategy(Strategy):
         self.max_notional_per_order_usd = max_notional_per_order_usd
         self.max_consecutive_losses = max_consecutive_losses
         self.max_data_staleness_minutes = max_data_staleness_minutes
+        self.offline_news_enabled = offline_news_enabled
+        self.offline_news_dir = offline_news_dir
         self._model = None
         self._model_load_failed = False
 
@@ -82,7 +86,11 @@ class SentimentMLStrategy(Strategy):
             daily_loss_limit_pct=daily_loss_limit_pct,
         )
         self.risk_manager = RiskManager(limits)
-        self.data_handler = DataHandler(source="alpaca")
+        self.data_handler = DataHandler(
+            source="alpaca",
+            offline_news_enabled=offline_news_enabled,
+            offline_news_dir=offline_news_dir,
+        )
         self._day_anchor_date: date | None = None
         self._day_anchor_equity: float | None = None
         self._last_snapshot_date: date | None = None
@@ -120,6 +128,7 @@ class SentimentMLStrategy(Strategy):
                 "action",
                 "action_source",
                 "model_prob_up",
+                "sentiment_source",
                 "sentiment_probability",
                 "sentiment_label",
                 "quantity",
@@ -449,6 +458,7 @@ class SentimentMLStrategy(Strategy):
         model_prob_up: float | None,
         sentiment_probability: float | None,
         sentiment_label: str | None,
+        sentiment_source: str | None,
         quantity: int,
         reason: str,
     ) -> None:
@@ -462,6 +472,7 @@ class SentimentMLStrategy(Strategy):
                 "action": action,
                 "action_source": action_source,
                 "model_prob_up": "" if model_prob_up is None else round(model_prob_up, 6),
+                "sentiment_source": "" if sentiment_source is None else sentiment_source,
                 "sentiment_probability": ""
                 if sentiment_probability is None
                 else round(float(sentiment_probability), 6),
@@ -481,7 +492,7 @@ class SentimentMLStrategy(Strategy):
 
         if self.kill_switch:
             self.sell_all()
-            self._log_decision("flat", "guardrail", None, None, None, 0, "kill_switch_enabled")
+            self._log_decision("flat", "guardrail", None, None, None, None, 0, "kill_switch_enabled")
             return
 
         anchor = self._day_anchor_equity
@@ -490,7 +501,7 @@ class SentimentMLStrategy(Strategy):
             current_equity=self._get_portfolio_value(),
         ):
             self.sell_all()
-            self._log_decision("flat", "guardrail", None, None, None, 0, "daily_loss_limit_breached")
+            self._log_decision("flat", "guardrail", None, None, None, None, 0, "daily_loss_limit_breached")
             return
 
         if self._consecutive_losses >= int(self.max_consecutive_losses):
@@ -501,23 +512,25 @@ class SentimentMLStrategy(Strategy):
                 None,
                 None,
                 None,
+                None,
                 0,
                 f"max_consecutive_losses_reached_{self._consecutive_losses}",
             )
             return
 
         if self._cooldown_until is not None and self.get_datetime() < self._cooldown_until:
-            self._log_decision("hold", "guardrail", None, None, None, 0, "cooldown_active")
+            self._log_decision("hold", "guardrail", None, None, None, None, 0, "cooldown_active")
             return
 
         if self._trades_today >= self.max_trades_per_day:
-            self._log_decision("hold", "guardrail", None, None, None, 0, "max_trades_per_day_reached")
+            self._log_decision("hold", "guardrail", None, None, None, None, 0, "max_trades_per_day_reached")
             return
 
         probability, sentiment = self._get_sentiment()
+        sentiment_source = getattr(self.data_handler, "last_news_source", "external")
         model_signal, model_prob_up = self._get_model_signal()
         if self._is_market_data_stale():
-            self._log_decision("hold", "guardrail", model_prob_up, probability, sentiment, 0, "stale_market_data")
+            self._log_decision("hold", "guardrail", model_prob_up, probability, sentiment, sentiment_source, 0, "stale_market_data")
             return
         decision = choose_trade_action(
             model_signal=model_signal,
@@ -534,6 +547,7 @@ class SentimentMLStrategy(Strategy):
                 model_prob_up,
                 probability,
                 sentiment,
+                sentiment_source,
                 int(result.get("quantity", 0)),
                 result.get("reason", ""),
             )
@@ -545,6 +559,7 @@ class SentimentMLStrategy(Strategy):
             model_prob_up,
             probability,
             sentiment,
+            sentiment_source,
             0,
             decision.reason,
         )

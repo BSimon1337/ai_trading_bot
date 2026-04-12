@@ -66,6 +66,21 @@ def test_backtest_entrypoint_routes_quick_window(monkeypatch):
     assert isinstance(captured["config"], BotConfig)
 
 
+def test_backtest_entrypoint_preserves_offline_news_config(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+    config = _config(offline_news_enabled=True, offline_news_dir=str(tmp_path))
+
+    monkeypatch.setattr(app_main, "setup_logging", lambda: None)
+    monkeypatch.setattr(app_main, "load_config", lambda: config)
+    monkeypatch.setattr(app_main, "_run_backtest", lambda config, quick_backtest, quick_days: captured.update(config=config))
+
+    exit_code = app_main.main(["--mode", "backtest"])
+
+    assert exit_code == 0
+    assert captured["config"].offline_news_enabled is True
+    assert captured["config"].offline_news_dir == str(tmp_path)
+
+
 def test_backtest_entrypoint_uses_modular_runner(monkeypatch):
     from tradingbot.app import backtest as backtest_app
 

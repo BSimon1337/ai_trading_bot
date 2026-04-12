@@ -46,6 +46,28 @@ python -m tradingbot.app.main --mode preflight
 
 3. Treat `fail` results as blockers. Treat `warning` results as allowed only when the requested run mode supports a safe fallback.
 
+Example pass output:
+
+```text
+Preflight readiness: pass
+- pass: credentials - Alpaca credential values are present.
+- pass: live_safeguards - Live safeguards not required for paper readiness.
+```
+
+Example warning output:
+
+```text
+Preflight readiness: warning
+- warning: alpaca_news_access - News access probe did not complete for SPY: unauthorized
+```
+
+Example fail output:
+
+```text
+Preflight readiness: fail
+- fail: live_safeguards - Live trading is blocked. Set LIVE_TRADING_ENABLED=1 only after paper validation.
+```
+
 ## Environment Switches
 
 Preflight and offline mode use the existing `.env` / `env/.env` loading pattern.
@@ -71,6 +93,12 @@ Offline development switches:
 
 1. Prepare local/cached news fixture data for the configured symbol and date range.
 2. Enable offline development mode.
+
+```powershell
+$env:OFFLINE_NEWS_ENABLED='true'
+$env:OFFLINE_NEWS_DIR='data/offline_news'
+```
+
 3. Run a quick backtest:
 
 ```powershell
