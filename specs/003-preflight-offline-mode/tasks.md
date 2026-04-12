@@ -93,16 +93,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T029 [P] [US3] Add dependency diagnostic tests in `tests/unit/test_preflight_readiness.py`
-- [ ] T030 [P] [US3] Extend model fallback coverage for preflight model-load warnings in `tests/unit/test_model_fallback.py`
+- [x] T029 [P] [US3] Add dependency diagnostic tests in `tests/unit/test_preflight_readiness.py`
+- [x] T030 [P] [US3] Extend model fallback coverage for preflight model-load warnings in `tests/unit/test_model_fallback.py`
 
 ### Implementation for User Story 3
 
-- [ ] T031 [US3] Implement required and optional dependency diagnostics in `tradingbot/app/preflight.py`
-- [ ] T032 [US3] Implement saved-model loadability diagnostics without crashing in `tradingbot/app/preflight.py`
-- [ ] T033 [US3] Add optional sentiment and FinBERT availability diagnostics in `tradingbot/app/preflight.py`
-- [ ] T034 [US3] Ensure CLI diagnostics distinguish required failures from optional warnings in `tradingbot/app/preflight.py`
-- [ ] T035 [US3] Document optional dependency behavior in `specs/003-preflight-offline-mode/quickstart.md`
+- [x] T031 [US3] Implement required and optional dependency diagnostics in `tradingbot/app/preflight.py`
+- [x] T032 [US3] Implement saved-model loadability diagnostics without crashing in `tradingbot/app/preflight.py`
+- [x] T033 [US3] Add optional sentiment and FinBERT availability diagnostics in `tradingbot/app/preflight.py`
+- [x] T034 [US3] Ensure CLI diagnostics distinguish required failures from optional warnings in `tradingbot/app/preflight.py`
+- [x] T035 [US3] Document optional dependency behavior in `specs/003-preflight-offline-mode/quickstart.md`
 
 ---
 
@@ -110,12 +110,12 @@
 
 **Purpose**: Validate the full feature, preserve safety guarantees, and avoid committing generated runtime artifacts.
 
-- [ ] T036 Run the targeted test suite covering `tests/unit/test_preflight_readiness.py`, `tests/unit/test_offline_news_fixtures.py`, `tests/unit/test_log_path_readiness.py`, `tests/unit/test_model_fallback.py`, `tests/smoke/test_preflight_entrypoint.py`, and `tests/smoke/test_paper_mode_guardrails.py`
-- [ ] T037 Run the quick preflight command manually and record expected results in `specs/003-preflight-offline-mode/quickstart.md`
-- [ ] T038 Verify no new dependencies or npm packages were introduced in `requirements.txt` and `pyproject.toml`
-- [ ] T039 Verify live mode remains fail-closed through `tests/smoke/test_paper_mode_guardrails.py`
-- [ ] T040 Review operator-visible log and CSV evidence for sentiment source and readiness events without committing runtime files under `logs/`
-- [ ] T041 Update `specs/003-preflight-offline-mode/tasks.md` task checkboxes as implementation progresses
+- [x] T036 Run the targeted test suite covering `tests/unit/test_preflight_readiness.py`, `tests/unit/test_offline_news_fixtures.py`, `tests/unit/test_log_path_readiness.py`, `tests/unit/test_model_fallback.py`, `tests/smoke/test_preflight_entrypoint.py`, and `tests/smoke/test_paper_mode_guardrails.py`
+- [x] T037 Run the quick preflight command manually and record expected results in `specs/003-preflight-offline-mode/quickstart.md`
+- [x] T038 Verify no new dependencies or npm packages were introduced in `requirements.txt` and `pyproject.toml`
+- [x] T039 Verify live mode remains fail-closed through `tests/smoke/test_paper_mode_guardrails.py`
+- [x] T040 Review operator-visible log and CSV evidence for sentiment source and readiness events without committing runtime files under `logs/`
+- [x] T041 Update `specs/003-preflight-offline-mode/tasks.md` task checkboxes as implementation progresses
 
 ---
 

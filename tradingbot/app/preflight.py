@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Mapping
+
+import joblib
 
 from tradingbot.config.settings import BotConfig, infer_asset_class
 from tradingbot.execution.safeguards import RuntimeGuardrailError, resolve_runtime_state
@@ -73,6 +76,9 @@ def run_preflight(config: BotConfig, target_mode: str | None = None) -> Readines
         _check_market_data_access(config),
         _check_news_access(config),
         _check_live_safeguards(config, requested_mode),
+        _check_required_dependencies(),
+        _check_optional_sentiment_dependencies(),
+        check_model_loadability(config),
     ]
     return ReadinessReport(tuple(checks))
 
@@ -258,3 +264,84 @@ def _check_live_safeguards(config: BotConfig, requested_mode: str) -> ReadinessC
         status=ReadinessStatus.PASS,
         message="Live safeguards are satisfied for explicit live readiness.",
     )
+
+
+def _check_required_dependencies() -> ReadinessCheckResult:
+    required_modules = ("lumibot", "alpaca", "pandas", "joblib", "dotenv")
+    missing = _missing_modules(required_modules)
+    if missing:
+        return ReadinessCheckResult(
+            name="required_dependencies",
+            status=ReadinessStatus.FAIL,
+            message=f"Missing required Python dependencies: {', '.join(missing)}.",
+            details={"missing": tuple(missing)},
+        )
+    return ReadinessCheckResult(
+        name="required_dependencies",
+        status=ReadinessStatus.PASS,
+        message="Required Python dependencies are importable.",
+        details={"checked": required_modules},
+    )
+
+
+def _check_optional_sentiment_dependencies() -> ReadinessCheckResult:
+    optional_modules = ("transformers", "torch")
+    missing = _missing_modules(optional_modules)
+    if missing:
+        return ReadinessCheckResult(
+            name="optional_sentiment_dependencies",
+            status=ReadinessStatus.WARNING,
+            message=(
+                "Optional local FinBERT sentiment dependencies are unavailable: "
+                f"{', '.join(missing)}. Core strategy can still use fallback sentiment paths."
+            ),
+            details={"missing": tuple(missing)},
+        )
+    return ReadinessCheckResult(
+        name="optional_sentiment_dependencies",
+        status=ReadinessStatus.PASS,
+        message="Optional local FinBERT sentiment dependencies are importable.",
+        details={"checked": optional_modules},
+    )
+
+
+def check_model_loadability(config: BotConfig) -> ReadinessCheckResult:
+    if not config.use_model_signal:
+        return ReadinessCheckResult(
+            name="model_loadability",
+            status=ReadinessStatus.PASS,
+            message="Model signal is disabled; no saved model load is required.",
+        )
+    model_path = Path(config.model_path)
+    if not model_path.exists():
+        return ReadinessCheckResult(
+            name="model_loadability",
+            status=ReadinessStatus.WARNING,
+            message=f"Model file is not present at {model_path}; strategy will fall back to sentiment rules.",
+            details={"model_path": str(model_path)},
+        )
+    try:
+        joblib.load(model_path)
+    except Exception as exc:
+        return ReadinessCheckResult(
+            name="model_loadability",
+            status=ReadinessStatus.WARNING,
+            message=f"Model file at {model_path} could not be loaded; strategy will fall back to sentiment rules. Error: {exc}",
+            details={"model_path": str(model_path), "error": str(exc)},
+        )
+    return ReadinessCheckResult(
+        name="model_loadability",
+        status=ReadinessStatus.PASS,
+        message=f"Model file loaded successfully from {model_path}.",
+        details={"model_path": str(model_path)},
+    )
+
+
+def _missing_modules(module_names: tuple[str, ...]) -> list[str]:
+    missing: list[str] = []
+    for module_name in module_names:
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            missing.append(module_name)
+    return missing

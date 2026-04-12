@@ -46,6 +46,13 @@ python -m tradingbot.app.main --mode preflight
 
 3. Treat `fail` results as blockers. Treat `warning` results as allowed only when the requested run mode supports a safe fallback.
 
+Dependency diagnostics use different severities:
+
+- Missing required runtime packages such as Lumibot, Alpaca, pandas, joblib, or python-dotenv produce a `fail`.
+- Missing optional local FinBERT packages such as transformers or torch produce a `warning`.
+- Missing or unloadable saved model files produce a `warning` when `USE_MODEL_SIGNAL=true`; the strategy can fall back to sentiment rules.
+- `USE_MODEL_SIGNAL=false` skips saved-model loading and reports a pass for model loadability.
+
 Example pass output:
 
 ```text
@@ -124,3 +131,14 @@ python -m pytest tests/smoke/test_paper_mode_guardrails.py
 - Missing Alpaca News access is visible but does not crash offline-capable backtests.
 - Live readiness fails when required live safeguards are incomplete.
 - Local fixture gaps are reported before neutral fallback is used.
+
+## Phase 6 Validation Snapshot
+
+Latest local validation:
+
+- Targeted pytest suite: `25 passed`
+- Paper preflight: `warning`, exit code `1`, due only to missing optional FinBERT packages (`transformers`, `torch`)
+- Live preflight: `fail`, exit code `2`, because `PAPER_TRADING` is enabled
+- Required dependencies: pass
+- Saved model loadability: pass
+- Alpaca trading, market data, and news probes: pass
