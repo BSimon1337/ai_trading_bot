@@ -30,11 +30,11 @@
 
 **Critical**: Complete this phase before starting any user story implementation.
 
-- [ ] T005 Create `ReadinessStatus`, `ReadinessCheckResult`, and `ReadinessReport` helpers in `tradingbot/app/preflight.py`
-- [ ] T006 [P] Add offline news fixture dataclasses and parsing helpers in `tradingbot/data/offline_news.py`
-- [ ] T007 [P] Add sentiment data-source fields to decision logging helpers in `tradingbot/execution/logging.py`
-- [ ] T008 Add preflight mode and CLI flag contract wiring in `tradingbot/app/main.py`
-- [ ] T009 [P] Add shared test fixtures or builders in `tests/conftest.py` if duplicated setup appears during tests
+- [x] T005 Create `ReadinessStatus`, `ReadinessCheckResult`, and `ReadinessReport` helpers in `tradingbot/app/preflight.py`
+- [x] T006 [P] Add offline news fixture dataclasses and parsing helpers in `tradingbot/data/offline_news.py`
+- [x] T007 [P] Add sentiment data-source fields to decision logging helpers in `tradingbot/execution/logging.py`
+- [x] T008 Add preflight mode and CLI flag contract wiring in `tradingbot/app/main.py`
+- [x] T009 [P] Add shared test fixtures or builders in `tests/conftest.py` if duplicated setup appears during tests
 
 ---
 

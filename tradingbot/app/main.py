@@ -17,9 +17,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sentiment trading bot runner")
     parser.add_argument(
         "--mode",
-        choices=["backtest", "live"],
+        choices=["backtest", "live", "preflight"],
         default="backtest",
         help="Run a historical backtest or start the live trading loop.",
+    )
+    parser.add_argument(
+        "--preflight-target",
+        choices=["backtest", "paper", "live"],
+        default=None,
+        help="Runtime target to evaluate when --mode preflight is used.",
     )
     parser.add_argument(
         "--quick-backtest",
@@ -67,6 +73,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "backtest":
         _run_backtest(config, quick_backtest=args.quick_backtest, quick_days=args.quick_days)
         return 0
+
+    if args.mode == "preflight":
+        from tradingbot.app.preflight import run_preflight
+
+        report = run_preflight(config, target_mode=args.preflight_target)
+        LOGGER.info("\n%s", report.to_text())
+        return report.exit_code
 
     paths = LogPaths.from_config(config)
     ensure_runtime_logs(paths)
