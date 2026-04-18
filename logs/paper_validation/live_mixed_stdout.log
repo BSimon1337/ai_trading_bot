@@ -1,0 +1,4 @@
+2026-04-16 19:11:32,078 | INFO | LumiBot v4.4.61 starting
+2026-04-16 19:11:35,615 | INFO | .env file loaded from: C:\Users\Beau\ai_trading_bot\env\.env
+2026-04-16 19:11:36,438 | INFO | [unknown] Waiting for the socket stream connection to be established,
+                method _stream_established must be called

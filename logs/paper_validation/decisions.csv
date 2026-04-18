@@ -306,3 +306,31 @@ timestamp,symbol,action,action_source,model_prob_up,sentiment_probability,sentim
 2024-10-30T09:30:00-04:00,backtest,SPY,stock,hold,sentiment,,0.0,neutral,0,100000.0,100000.0,sentiment_probability_below_threshold,skipped
 2024-10-31T09:30:00-04:00,backtest,SPY,stock,hold,sentiment,,0.0,neutral,0,100000.0,100000.0,sentiment_probability_below_threshold,skipped
 2026-04-11T17:12:54Z,backtest,SPY,stock,hold,backtest,,,,0,,,backtest_completed,completed
+2026-04-12T18:01:01.316233+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-12T18:09:39.364930+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-12T18:26:20.239264+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-12T14:27:01.669498-04:00,live,BTC/USD,crypto,hold,model,0.680791,external,0.0,neutral,0,100.0,100.0,invalid_last_price,skipped
+2026-04-12T18:32:38.656084+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-12T18:36:37.531022+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-12T18:40:20.047722+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-12T14:41:01.979001-04:00,live,BTC/USD,crypto,buy,model,0.552085,external,0.0,neutral,0,100.0,100.0,submitted,skipped
+2026-04-17T00:11:03.722268+00:00,preflight-live,SYSTEM,system,hold,guardrail,,,,,0,,,"Preflight readiness: warning | - pass: credentials - Alpaca credential values are present. | - pass: symbols - Configured symbols are parseable: {'F': 'stock', 'BTC/USD': 'crypto'}. | - pass: log_paths - Runtime log paths are writable or creatable. | - pass: alpaca_trading_access - Trading account probe completed with status ACTIVE. | - pass: alpaca_market_data_access - Market data probe completed for F. | - pass: alpaca_news_access - News access probe completed for F. | - pass: live_safeguards - Live safeguards are satisfied for explicit live readiness. | - pass: required_dependencies - Required Python dependencies are importable. | - warning: optional_sentiment_dependencies - Optional local FinBERT sentiment dependencies are unavailable: transformers, torch. Core strategy can still use fallback sentiment paths. | - pass: model_loadability - Model file loaded successfully from models\xgb_full.joblib.",warning
+2026-04-17T00:11:27.526715+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-17T00:11:36.875468+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,Running multiple live strategies is not implemented yet. You passed in 2 strategies.,failed
+2026-04-17T00:13:09.695957+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-17T00:13:09.712129+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-16T20:14:01.398116-04:00,live,BTC/USD,crypto,hold,guardrail,0.566873,external,0.0,neutral,0,100.0,99.02,stale_market_data,skipped
+2026-04-17T00:17:09.276898+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-17T00:17:09.312490+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-16T20:18:01.355700-04:00,live,BTC/USD,crypto,hold,guardrail,0.566873,external,0.0,neutral,0,100.0,99.02,stale_market_data,skipped
+2026-04-17T00:33:57.914582+00:00,preflight-live,SYSTEM,system,hold,guardrail,,,,,0,,,"Preflight readiness: pass | - pass: credentials - Alpaca credential values are present. | - pass: symbols - Configured symbols are parseable: {'F': 'stock', 'BTC/USD': 'crypto'}. | - pass: log_paths - Runtime log paths are writable or creatable. | - pass: alpaca_trading_access - Trading account probe completed with status ACTIVE. | - pass: alpaca_market_data_access - Market data probe completed for F. | - pass: alpaca_news_access - News access probe completed for F. | - pass: live_safeguards - Live safeguards are satisfied for explicit live readiness. | - pass: required_dependencies - Required Python dependencies are importable. | - pass: optional_sentiment_dependencies - Optional local FinBERT sentiment dependencies are importable. | - pass: model_loadability - Model file loaded successfully from models\xgb_full.joblib.",pass
+2026-04-17T00:34:14.391091+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-17T00:34:14.411224+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started
+2026-04-16T20:35:11.152342-04:00,live,BTC/USD,crypto,hold,guardrail,0.621105,external,1.0,neutral,0,100.0,99.02,stale_market_data,skipped
+2026-04-16T20:50:02.140524-04:00,live,BTC/USD,crypto,hold,guardrail,0.621105,external,1.0,neutral,0,100.0,99.02,stale_market_data,skipped
+2026-04-16T21:05:01.992724-04:00,live,BTC/USD,crypto,hold,guardrail,0.621105,external,1.0,neutral,0,100.0,99.02,stale_market_data,skipped
+2026-04-16T21:20:02.104494-04:00,live,BTC/USD,crypto,hold,guardrail,0.621105,external,1.0,neutral,0,100.0,99.02,stale_market_data,skipped
+2026-04-16T21:35:02.203417-04:00,live,BTC/USD,crypto,hold,guardrail,0.621105,external,1.0,neutral,0,100.0,99.02,stale_market_data,skipped
+2026-04-16T21:50:03.204139-04:00,live,BTC/USD,crypto,hold,guardrail,0.621105,external,1.0,neutral,0,99.99,99.02,stale_market_data,skipped
+2026-04-16T22:05:02.144186-04:00,live,BTC/USD,crypto,hold,guardrail,0.621105,external,1.0,neutral,0,100.0,99.02,stale_market_data,skipped
+2026-04-16T22:20:02.129460-04:00,live,BTC/USD,crypto,hold,guardrail,0.621105,external,1.0,neutral,0,99.99,99.02,stale_market_data,skipped

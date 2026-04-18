@@ -1,0 +1,12 @@
+2026-04-12 13:40:24,984 | INFO | LumiBot v4.4.61 starting
+2026-04-12 13:40:28,736 | INFO | .env file loaded from: C:\Users\Beau\ai_trading_bot\env\.env
+2026-04-12 13:40:29,646 | INFO | [unknown] Waiting for the socket stream connection to be established,
+                method _stream_established must be called
+2026-04-12 13:40:29,967 | INFO | [sentiment_ml_btc_usd] Strategy sentiment_ml_btc_usd is initializing
+2026-04-12 13:40:30,924 | INFO | [sentiment_ml_btc_usd] Strategy will check in again at: 2026-04-12 01:41:00 PM CDT
+2026-04-12 13:40:30,927 | WARNING | lumibot_logger.py:warning:613 | [sentiment_ml_btc_usd] LUMIWEALTH_API_KEY not set. Not sending an update to the cloud because lumiwealth_api_key is not set. If you would like to be able to track your bot performance on www.botspot.trade, please set the lumiwealth_api_key parameter in the strategy initialization or the LUMIWEALTH_API_KEY environment variable.
+2026-04-12 13:40:31,663 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":1,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776019231.6624389,"v":1}
+2026-04-12 13:41:00,195 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-12 01:41:00 PM LMT
+2026-04-12 13:41:01,913 | WARNING | order.py:__init__:551 | DEPRECATED in C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\lumibot\strategies\strategy.py:create_order:756 - Order parameter 'type' is deprecated. Use 'order_type' instead.
+2026-04-12 13:41:01,976 | ERROR | alpaca.py:_submit_order:1005 | market order of | 0.00028072 BTC/USD buy | error did not go through. The following error occurred: {"available":"0","balance":"100","code":40310000,"message":"insufficient balance for USD (requested: 20.4, available: 0)","symbol":"USD"}
+2026-04-12 13:41:01,979 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-12 01:41:01 PM LMT, next check in time is 2026-04-12 01:42:00 PM CDT. Took 1.97s

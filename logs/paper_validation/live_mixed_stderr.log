@@ -1,0 +1,25 @@
+2026-04-16 19:11:32,078 INFO [lumibot] LumiBot v4.4.61 starting
+2026-04-16 19:11:35,615 INFO [lumibot.credentials] .env file loaded from: C:\Users\Beau\ai_trading_bot\env\.env
+2026-04-16 19:11:36,438 INFO [lumibot.brokers.broker] [unknown] Waiting for the socket stream connection to be established,
+                method _stream_established must be called
+2026-04-16 19:11:36,440 INFO [alpaca.trading.stream] started trading stream
+2026-04-16 19:11:36,441 INFO [alpaca.trading.stream] starting trading websocket connection
+2026-04-16 19:11:36,444 INFO [tradingbot.app.live] Adding stock strategy for F in live mode
+2026-04-16 19:11:36,733 INFO [tradingbot.app.live] Adding crypto strategy for BTC/USD in live mode
+2026-04-16 19:11:36,755 INFO [alpaca.trading.stream] connected to: wss://api.alpaca.markets/stream
+Traceback (most recent call last):
+  File "C:\Users\Beau\AppData\Local\Programs\Python\Python310\lib\runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "C:\Users\Beau\AppData\Local\Programs\Python\Python310\lib\runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "C:\Users\Beau\ai_trading_bot\tradingbot\app\main.py", line 115, in <module>
+    raise SystemExit(main())
+  File "C:\Users\Beau\ai_trading_bot\tradingbot\app\main.py", line 107, in main
+    _run_live_loop(config, runtime_state)
+  File "C:\Users\Beau\ai_trading_bot\tradingbot\app\main.py", line 65, in _run_live_loop
+    run_trading_loop(config, runtime_state)
+  File "C:\Users\Beau\ai_trading_bot\tradingbot\app\live.py", line 32, in run_trading_loop
+    trader.run_all()
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\lumibot\traders\trader.py", line 165, in run_all
+    raise NotImplementedError(
+NotImplementedError: Running multiple live strategies is not implemented yet. You passed in 2 strategies.
