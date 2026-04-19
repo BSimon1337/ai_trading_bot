@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="15">
+  <meta http-equiv="refresh" content="{{ refresh_seconds|default(15) }}">
   <title>Trading Bot Monitor</title>
   <style>
     :root {
@@ -56,7 +56,8 @@
     .running { color: var(--ok); background: rgba(34,197,94,.12); }
     .paper { color: var(--accent); background: rgba(56,189,248,.12); }
     .live { color: var(--ok); background: rgba(34,197,94,.16); }
-    .blocked_live { color: var(--bad); background: rgba(239,68,68,.18); }
+    .blocked, .blocked_live { color: var(--bad); background: rgba(239,68,68,.18); }
+    .failed { color: var(--bad); background: rgba(239,68,68,.18); }
     .stale { color: var(--bad); background: rgba(239,68,68,.15); }
     .no_data { color: var(--warn); background: rgba(245,158,11,.14); }
     .overview-grid {
@@ -202,21 +203,46 @@
     }
     th { color: var(--muted); position: sticky; top: 0; background: #111827; }
     .empty { padding: 16px; color: var(--muted); font-size: 13px; }
+    .issue-list {
+      margin: 0;
+      padding: 12px 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .issue-list li { margin-bottom: 6px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="head">
       <h1 class="title">Trading Bot Monitor</h1>
-      <div class="muted">updated {{ status_updated_utc }}</div>
+      <div class="muted">state {{ aggregate_state }} | updated {{ status_updated_utc }}</div>
     </div>
+
+    {% if not instances %}
+    <section class="panel">
+      <h2>No monitored instances</h2>
+      <div class="empty">No monitored instances are configured yet.</div>
+    </section>
+    {% endif %}
+
+    {% if issues %}
+    <section class="panel">
+      <h2>Recent Issues</h2>
+      <ul class="issue-list">
+        {% for issue in issues %}
+        <li><strong>{{ issue.severity }}</strong> {{ issue.symbol }}: {{ issue.message }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
 
     <div class="overview-grid">
       {% for instance in instances %}
       <section class="instance-card">
         <div class="instance-head">
           <h2 class="instance-name">{{ instance.label }}</h2>
-          <span class="status {{ instance.status }}">{{ instance.status }}</span>
+          <span class="status {{ instance.status.state }}">{{ instance.status.state }}</span>
         </div>
         <div class="mini-grid">
           <div class="mini">
@@ -251,6 +277,9 @@
           {% endif %}
           | reason: {{ instance.latest_reason }}
         </p>
+        {% if instance.issues %}
+        <p class="muted" style="margin: 8px 0 0 0;">{{ instance.issues|length }} issue(s): {{ instance.issues[0].message }}</p>
+        {% endif %}
       </section>
       {% endfor %}
     </div>
@@ -332,6 +361,19 @@
         </div>
         {% else %}
         <div class="empty">No fill rows yet.</div>
+        {% endif %}
+      </div>
+
+      <div class="panel">
+        <h2>{{ instance.label }} Issues</h2>
+        {% if instance.issues %}
+        <ul class="issue-list">
+          {% for issue in instance.issues %}
+          <li><strong>{{ issue.severity }}</strong> {{ issue.category }}: {{ issue.message }}</li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No runtime issues detected.</div>
         {% endif %}
       </div>
     </section>

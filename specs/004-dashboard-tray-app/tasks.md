@@ -53,18 +53,18 @@
 
 ### Tests for User Story 1
 
-- [ ] T015 [P] [US1] Add contract tests for `GET /`, `GET /health`, and `GET /api/status` in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T016 [P] [US1] Add route smoke tests for dashboard startup and no-data rendering in `tests/smoke/test_monitor_entrypoint.py`
-- [ ] T017 [P] [US1] Add unit tests for dashboard status aggregation across at least 10 fixture instances in `tests/unit/test_monitor_data.py`
+- [x] T015 [P] [US1] Add contract tests for `GET /`, `GET /health`, and `GET /api/status` in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T016 [P] [US1] Add route smoke tests for dashboard startup and no-data rendering in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T017 [P] [US1] Add unit tests for dashboard status aggregation across at least 10 fixture instances in `tests/unit/test_monitor_data.py`
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] Implement dashboard status aggregation and instance summaries in `tradingbot/app/monitor.py`
-- [ ] T019 [US1] Implement Flask app factory, `/`, `/health`, and `/api/status` routes in `tradingbot/app/monitor.py`
-- [ ] T020 [US1] Refactor root compatibility entrypoint to use the monitor app factory in `monitor_app.py`
-- [ ] T021 [US1] Update dashboard cards, recent decisions, recent fills, no-data states, and auto-refresh behavior in `templates/monitor.html`
-- [ ] T022 [US1] Ensure dashboard output excludes credentials and sensitive environment values in `tradingbot/app/monitor.py`
-- [ ] T023 [US1] Validate User Story 1 by running dashboard contract, unit, and smoke tests in `tests/contract/test_dashboard_monitor_contract.py`, `tests/unit/test_monitor_data.py`, and `tests/smoke/test_monitor_entrypoint.py`
+- [x] T018 [US1] Implement dashboard status aggregation and instance summaries in `tradingbot/app/monitor.py`
+- [x] T019 [US1] Implement Flask app factory, `/`, `/health`, and `/api/status` routes in `tradingbot/app/monitor.py`
+- [x] T020 [US1] Refactor root compatibility entrypoint to use the monitor app factory in `monitor_app.py`
+- [x] T021 [US1] Update dashboard cards, recent decisions, recent fills, no-data states, and auto-refresh behavior in `templates/monitor.html`
+- [x] T022 [US1] Ensure dashboard output excludes credentials and sensitive environment values in `tradingbot/app/monitor.py`
+- [x] T023 [US1] Validate User Story 1 by running dashboard contract, unit, and smoke tests in `tests/contract/test_dashboard_monitor_contract.py`, `tests/unit/test_monitor_data.py`, and `tests/smoke/test_monitor_entrypoint.py`
 
 **Checkpoint**: Browser dashboard MVP is independently usable and read-only.
 

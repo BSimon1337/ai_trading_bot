@@ -7,7 +7,9 @@ import pandas as pd
 from tests.conftest import make_bot_config
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, recent_decision, write_decisions, write_malformed_csv
 from tradingbot.app.monitor import (
+    DashboardInstance,
     discover_monitor_instances,
+    dashboard_status,
     load_monitor_configuration,
     normalize_timestamps,
     redact_sensitive_values,
@@ -122,3 +124,26 @@ def test_monitor_fixture_builder_supports_phase_two_states(tmp_path):
 
         assert set(paths) == {"decisions", "fills", "snapshot"}
         assert paths["decisions"].name == "decisions.csv"
+
+
+def test_dashboard_status_aggregates_at_least_ten_instances(tmp_path):
+    instances = []
+    for index in range(10):
+        symbol = f"SYM{index}"
+        paths = create_monitor_fixture(tmp_path / symbol, "healthy", symbol=symbol)
+        instances.append(
+            DashboardInstance(
+                label=symbol,
+                symbols=(symbol,),
+                asset_classes=("stock",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+            )
+        )
+
+    payload = dashboard_status(tuple(instances))
+
+    assert payload["aggregate_state"] in {"paper", "running"}
+    assert len(payload["instances"]) == 10
+    assert all(item["latest_reason"] for item in payload["instances"])
