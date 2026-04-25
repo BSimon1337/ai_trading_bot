@@ -26,7 +26,25 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
 
     assert status_response.status_code == 200
     payload = status_response.get_json()
-    assert set(payload) >= {"status_updated_utc", "aggregate_state", "instances", "issues", "recent_activity_columns", "recent_activity_rows"}
+    assert set(payload) >= {
+        "status_updated_utc",
+        "aggregate_state",
+        "account_overview",
+        "instances",
+        "issues",
+        "recent_activity_columns",
+        "recent_activity_rows",
+    }
+    assert set(payload["account_overview"]) >= {
+        "cash",
+        "account_equity",
+        "day_pnl",
+        "source_instance",
+        "latest_update_utc",
+        "instances_count",
+        "instances_with_fills",
+        "is_stale",
+    }
     assert payload["instances"][0]["label"] == "BTC/USD"
     assert set(payload["instances"][0]) >= {
         "status",
@@ -42,6 +60,8 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "recent_decisions",
         "recent_fills",
         "issues",
+        "held_value",
+        "held_value_source",
     }
     assert health_response.status_code == 200
     assert health_response.get_json()["ok"] is True

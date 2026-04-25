@@ -597,21 +597,41 @@ def summarize_instance(
     decisions = normalize_timestamps(decision_result.dataframe)
     fills = normalize_timestamps(fill_result.dataframe)
     snapshot = _normalize_snapshot_frame(snapshot_result.dataframe)
+    active_decisions = _filter_active_evidence(decisions, active_minutes=stale_after_minutes)
+    active_fills = _filter_active_evidence(fills, active_minutes=stale_after_minutes)
+    active_snapshot = _filter_active_evidence(snapshot, active_minutes=stale_after_minutes)
 
     latest_decision = (
-        _row_to_summary(decisions.iloc[-1].to_dict(), DecisionSummary) if not decisions.empty else None
+        _row_to_summary(
+            (active_decisions.iloc[-1] if not active_decisions.empty else decisions.iloc[-1]).to_dict(),
+            DecisionSummary,
+        )
+        if not decisions.empty
+        else None
     )
-    latest_fill = _row_to_summary(fills.iloc[-1].to_dict(), FillSummary) if not fills.empty else None
+    latest_fill = (
+        _row_to_summary(
+            (active_fills.iloc[-1] if not active_fills.empty else fills.iloc[-1]).to_dict(),
+            FillSummary,
+        )
+        if not fills.empty
+        else None
+    )
     latest_snapshot = (
-        _row_to_summary(snapshot.iloc[-1].to_dict(), SnapshotSummary) if not snapshot.empty else None
+        _row_to_summary(
+            (active_snapshot.iloc[-1] if not active_snapshot.empty else snapshot.iloc[-1]).to_dict(),
+            SnapshotSummary,
+        )
+        if not snapshot.empty
+        else None
     )
     last_timestamp = _latest_timestamp(decisions, fills)
     age = _age_minutes(last_timestamp)
     issues = _issues_from_evidence(
         (decision_result, fill_result, snapshot_result),
-        decisions,
-        fills,
-        snapshot,
+        active_decisions,
+        active_fills,
+        active_snapshot,
         age,
         stale_after_minutes,
     )
@@ -664,6 +684,7 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
     recent_decisions = _recent_rows(decisions)
     recent_fills = _recent_rows(fills)
     latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
+    held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
     return {
         "label": instance.label,
         "status": _status_to_dict(instance.status),
@@ -683,6 +704,7 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "cash": to_float(latest_snapshot.cash),
         "day_pnl": to_float(latest_snapshot.day_pnl),
         "position_qty": to_float(latest_snapshot.position_qty),
+        "held_value": held_value,
         "held_value_estimate": held_value_estimate,
         "held_value_source": held_value_source,
         "latest_fill_price": latest_fill_price,
@@ -734,20 +756,29 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
             "cash": 0.0,
             "day_pnl": 0.0,
             "active_instances": len(instances),
+            "instances_count": len(instances),
             "fills_today": 0,
+            "instances_with_fills": 0,
             "source_instance": "",
             "latest_update_utc": "",
+            "is_stale": True,
         }
     snapshot = freshest.latest_snapshot or SnapshotSummary()
     latest_update = snapshot.timestamp or freshest.last_updated_at or ""
+    latest_update_ts = _parse_instance_timestamp(latest_update)
+    is_stale = True if latest_update_ts is None else (_age_minutes(latest_update_ts) or 0.0) > DEFAULT_STALE_AFTER_MINUTES
+    instances_with_fills = sum(1 for instance in instances if instance.latest_fill is not None)
     return {
         "account_equity": to_float(snapshot.portfolio_value),
         "cash": to_float(snapshot.cash),
         "day_pnl": to_float(snapshot.day_pnl),
         "active_instances": len(instances),
-        "fills_today": sum(1 for instance in instances if instance.latest_fill is not None),
+        "instances_count": len(instances),
+        "fills_today": instances_with_fills,
+        "instances_with_fills": instances_with_fills,
         "source_instance": freshest.label,
         "latest_update_utc": latest_update,
+        "is_stale": is_stale,
     }
 
 

@@ -250,8 +250,28 @@ def test_dashboard_status_uses_snapshot_delta_held_value_without_recent_fill(tmp
     item = payload["instances"][0]
 
     assert item["held_value_source"] == VALUE_SOURCE_SNAPSHOT_DELTA
+    assert item["held_value"] == 20.0
     assert item["held_value_estimate"] == 20.0
     assert item["latest_fill_price"] == 10.0
+
+
+def test_dashboard_status_prefers_current_healthy_restart_over_old_failed_evidence(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "mixed_current_historical", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["status"]["state"] == "live"
+    assert item["latest_reason"] == "delta_qty_zero"
+    assert not any(issue["category"] == "failed" for issue in item["issues"])
 
 
 def test_dashboard_status_aggregates_at_least_ten_instances(tmp_path):
@@ -441,6 +461,8 @@ def test_dashboard_status_includes_account_overview_from_freshest_instance(tmp_p
     assert payload["account_overview"]["source_instance"] == "ETH/USD"
     assert payload["account_overview"]["account_equity"] == 100.0
     assert payload["account_overview"]["cash"] == 100.0
+    assert payload["account_overview"]["instances_count"] == 2
+    assert payload["account_overview"]["is_stale"] is False
 
 
 def test_monitor_reads_snapshot_rows_with_iso_timestamps(tmp_path):

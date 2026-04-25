@@ -47,18 +47,18 @@
 
 ### Tests for User Story 1
 
-- [ ] T009 [P] [US1] Add unit tests for healthy restart precedence over older failed evidence in `tests/unit/test_monitor_data.py`
-- [ ] T010 [P] [US1] Add unit tests for one authoritative account summary source per refresh in `tests/unit/test_monitor_data.py`
-- [ ] T011 [P] [US1] Add contract tests for `account_overview`, `held_value`, and `held_value_source` fields in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T009 [P] [US1] Add unit tests for healthy restart precedence over older failed evidence in `tests/unit/test_monitor_data.py`
+- [x] T010 [P] [US1] Add unit tests for one authoritative account summary source per refresh in `tests/unit/test_monitor_data.py`
+- [x] T011 [P] [US1] Add contract tests for `account_overview`, `held_value`, and `held_value_source` fields in `tests/contract/test_dashboard_monitor_contract.py`
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] Update instance status classification to prefer the latest valid evidence over stale failed history in `tradingbot/app/monitor.py`
-- [ ] T013 [US1] Refine account overview assembly to use one freshest trusted source in `tradingbot/app/monitor.py`
-- [ ] T014 [US1] Implement held-value fallback behavior and explicit unavailable-state handling in `tradingbot/app/monitor.py`
-- [ ] T015 [US1] Update per-instance payload shaping for `held_value`, `held_value_source`, and authoritative account fields in `tradingbot/app/monitor.py`
-- [ ] T016 [US1] Update dashboard account overview and per-instance cards to reflect the authoritative summary and held-value semantics in `templates/monitor.html`
-- [ ] T017 [US1] Validate User Story 1 by running `tests/unit/test_monitor_data.py` and `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T012 [US1] Update instance status classification to prefer the latest valid evidence over stale failed history in `tradingbot/app/monitor.py`
+- [x] T013 [US1] Refine account overview assembly to use one freshest trusted source in `tradingbot/app/monitor.py`
+- [x] T014 [US1] Implement held-value fallback behavior and explicit unavailable-state handling in `tradingbot/app/monitor.py`
+- [x] T015 [US1] Update per-instance payload shaping for `held_value`, `held_value_source`, and authoritative account fields in `tradingbot/app/monitor.py`
+- [x] T016 [US1] Update dashboard account overview and per-instance cards to reflect the authoritative summary and held-value semantics in `templates/monitor.html`
+- [x] T017 [US1] Validate User Story 1 by running `tests/unit/test_monitor_data.py` and `tests/contract/test_dashboard_monitor_contract.py`
 
 **Checkpoint**: The dashboard can be trusted as the current status view for live and paper monitoring.
 
