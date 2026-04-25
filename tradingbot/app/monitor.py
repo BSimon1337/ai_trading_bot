@@ -592,6 +592,7 @@ def create_app(
     instances: tuple[DashboardInstance, ...] | None = None,
     config: BotConfig | None = None,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+    refresh_seconds: int = DEFAULT_REFRESH_SECONDS,
 ) -> Flask:
     app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[2] / "templates"))
 
@@ -601,7 +602,7 @@ def create_app(
     @app.route("/")
     def dashboard():
         payload = status_payload()
-        return render_template("monitor.html", **payload, refresh_seconds=DEFAULT_REFRESH_SECONDS)
+        return render_template("monitor.html", **payload, refresh_seconds=refresh_seconds)
 
     @app.route("/health")
     def health():

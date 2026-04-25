@@ -4,3 +4,5 @@ venv/
 __pycache__/
 *.py[cod]
 logs/SentimentMLStrategy_*
+logs/paper_validation*/
+logs/*monitor*.log

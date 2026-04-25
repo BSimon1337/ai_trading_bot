@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import webbrowser
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -7,6 +8,7 @@ from typing import Any, Callable
 from tradingbot.app.monitor import (
     MonitorConfiguration,
     TrayState,
+    create_app,
     dashboard_status,
     load_monitor_configuration,
 )
@@ -218,3 +220,91 @@ def start_monitor_tray(
         dependencies=dependencies,
     )
     return controller, controller.start(detached=detached)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the local trading bot monitor dashboard and tray.")
+    parser.add_argument("--host", default=None, help="Dashboard host override. Defaults to monitor configuration.")
+    parser.add_argument("--port", type=int, default=None, help="Dashboard port override. Defaults to monitor configuration.")
+    parser.add_argument(
+        "--refresh-seconds",
+        type=int,
+        default=None,
+        help="Dashboard refresh cadence in seconds. Defaults to monitor configuration.",
+    )
+    parser.add_argument(
+        "--no-tray",
+        action="store_true",
+        help="Run the dashboard without creating a system tray icon.",
+    )
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Explicitly affirm read-only monitor mode. This monitor never places orders.",
+    )
+    return parser.parse_args(argv)
+
+
+def _config_with_overrides(
+    config: MonitorConfiguration,
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    refresh_seconds: int | None = None,
+    read_only: bool = True,
+    tray_enabled: bool | None = None,
+) -> MonitorConfiguration:
+    return MonitorConfiguration(
+        dashboard_host=host or config.dashboard_host,
+        dashboard_port=port or config.dashboard_port,
+        refresh_seconds=refresh_seconds or config.refresh_seconds,
+        tray_enabled=config.tray_enabled if tray_enabled is None else tray_enabled,
+        read_only=read_only,
+        instances=config.instances,
+    )
+
+
+def run_dashboard_only(
+    config: MonitorConfiguration,
+    *,
+    app_factory: Callable[..., Any] = create_app,
+) -> Any:
+    app = app_factory(instances=config.instances, refresh_seconds=config.refresh_seconds)
+    app.run(host=config.dashboard_host, port=config.dashboard_port, debug=False, use_reloader=False)
+    return app
+
+
+def run_monitor(
+    *,
+    argv: list[str] | None = None,
+    config: MonitorConfiguration | None = None,
+    app_factory: Callable[..., Any] = create_app,
+    tray_launcher: Callable[..., tuple[TrayController, dict[str, Any]]] = start_monitor_tray,
+) -> int:
+    args = parse_args(argv)
+    base_config = config or load_monitor_configuration()
+    runtime_config = _config_with_overrides(
+        base_config,
+        host=args.host,
+        port=args.port,
+        refresh_seconds=args.refresh_seconds,
+        read_only=True if args.read_only or True else True,
+        tray_enabled=False if args.no_tray else base_config.tray_enabled,
+    )
+
+    if args.no_tray:
+        run_dashboard_only(runtime_config, app_factory=app_factory)
+        return 0
+
+    tray_launcher(config=runtime_config)
+    app = app_factory(instances=runtime_config.instances, refresh_seconds=runtime_config.refresh_seconds)
+    app.run(host=runtime_config.dashboard_host, port=runtime_config.dashboard_port, debug=False, use_reloader=False)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return run_monitor(argv=argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -126,16 +126,16 @@
 
 ### Tests for User Story 4
 
-- [ ] T040 [P] [US4] Add smoke tests for `python -m tradingbot.app.tray --no-tray` and monitor startup behavior in `tests/smoke/test_monitor_entrypoint.py`
-- [ ] T041 [P] [US4] Add smoke tests for root `monitor_app.py` compatibility in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T040 [P] [US4] Add smoke tests for `python -m tradingbot.app.tray --no-tray` and monitor startup behavior in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T041 [P] [US4] Add smoke tests for root `monitor_app.py` compatibility in `tests/smoke/test_monitor_entrypoint.py`
 
 ### Implementation for User Story 4
 
-- [ ] T042 [US4] Add CLI options for dashboard host, dashboard port, refresh seconds, `--no-tray`, and read-only mode in `tradingbot/app/tray.py`
-- [ ] T043 [US4] Add package script entry for the monitor command in `pyproject.toml`
-- [ ] T044 [US4] Update dashboard/tray launch instructions, stop instructions, and troubleshooting notes in `README.md`
-- [ ] T045 [US4] Update feature quickstart with final commands and validation results in `specs/004-dashboard-tray-app/quickstart.md`
-- [ ] T046 [US4] Validate User Story 4 by running smoke tests in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T042 [US4] Add CLI options for dashboard host, dashboard port, refresh seconds, `--no-tray`, and read-only mode in `tradingbot/app/tray.py`
+- [x] T043 [US4] Add package script entry for the monitor command in `pyproject.toml`
+- [x] T044 [US4] Update dashboard/tray launch instructions, stop instructions, and troubleshooting notes in `README.md`
+- [x] T045 [US4] Update feature quickstart with final commands and validation results in `specs/004-dashboard-tray-app/quickstart.md`
+- [x] T046 [US4] Validate User Story 4 by running smoke tests in `tests/smoke/test_monitor_entrypoint.py`
 
 **Checkpoint**: Monitor can be launched and explained like a local application.
 
@@ -145,12 +145,12 @@
 
 **Purpose**: Final validation, dependency discipline, documentation consistency, and operator evidence.
 
-- [ ] T047 [P] Re-verify dependency pinning and age notes for `pystray==0.19.5` and `Pillow==11.3.0` in `specs/004-dashboard-tray-app/research.md`
-- [ ] T048 [P] Add dashboard/tray troubleshooting entries for blank windows, wrong working directory, missing logs, and tray unavailable state in `README.md`
-- [ ] T049 [P] Ensure monitor-specific generated files and runtime artifacts are ignored or documented in `.gitignore`
-- [ ] T050 Run full test suite with `.\.venv\Scripts\python.exe -m pytest`
-- [ ] T051 Manually validate quickstart launch flow and record observed dashboard/tray evidence in `specs/004-dashboard-tray-app/quickstart.md`
-- [ ] T052 Review dashboard/tray code for read-only safety and confirm no trading order APIs are called from `tradingbot/app/monitor.py` or `tradingbot/app/tray.py`
+- [x] T047 [P] Re-verify dependency pinning and age notes for `pystray==0.19.5` and `Pillow==11.3.0` in `specs/004-dashboard-tray-app/research.md`
+- [x] T048 [P] Add dashboard/tray troubleshooting entries for blank windows, wrong working directory, missing logs, and tray unavailable state in `README.md`
+- [x] T049 [P] Ensure monitor-specific generated files and runtime artifacts are ignored or documented in `.gitignore`
+- [x] T050 Run full test suite with `.\.venv\Scripts\python.exe -m pytest`
+- [x] T051 Manually validate quickstart launch flow and record observed dashboard/tray evidence in `specs/004-dashboard-tray-app/quickstart.md`
+- [x] T052 Review dashboard/tray code for read-only safety and confirm no trading order APIs are called from `tradingbot/app/monitor.py` or `tradingbot/app/tray.py`
 
 ---
 
