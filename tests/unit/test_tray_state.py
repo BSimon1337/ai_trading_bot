@@ -37,7 +37,22 @@ def test_tray_state_mapping_handles_warning_states():
 
     assert state.state == "stale"
     assert state.label.endswith("(Stale)")
-    assert "Issues: 1" in state.tooltip
+    assert "Warnings: 1" in state.tooltip
+
+
+def test_tray_state_mapping_highlights_critical_issue_aggregation():
+    payload = {
+        "status_updated_utc": "2026-04-19 12:00:00 UTC",
+        "aggregate_state": "failed",
+        "instances": [{"label": "BTC/USD"}, {"label": "ETH/USD"}],
+        "issues": [{"severity": "critical"}, {"severity": "warning"}, {"severity": "critical"}],
+    }
+
+    state = tray_state_from_dashboard(payload)
+
+    assert state.state == "failed"
+    assert "Critical: 2" in state.tooltip
+    assert "Warnings: 1" in state.tooltip
 
 
 def test_tray_actions_only_use_monitor_callbacks():

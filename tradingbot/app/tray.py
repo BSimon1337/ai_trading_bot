@@ -153,7 +153,15 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     issues = payload.get("issues", []) or []
     issue_count = len(issues)
     instance_count = len(instances)
-    tooltip = f"{summary} Instances: {instance_count}. Issues: {issue_count}."
+    critical_count = sum(1 for issue in issues if issue.get("severity") == "critical")
+    warning_count = sum(1 for issue in issues if issue.get("severity") == "warning")
+    if critical_count:
+        issue_summary = f"Critical: {critical_count}. Warnings: {warning_count}."
+    elif warning_count:
+        issue_summary = f"Warnings: {warning_count}."
+    else:
+        issue_summary = f"Issues: {issue_count}."
+    tooltip = f"{summary} Instances: {instance_count}. {issue_summary}"
     return TrayState(
         label=label,
         state=aggregate_state,

@@ -60,6 +60,10 @@
     .failed { color: var(--bad); background: rgba(239,68,68,.18); }
     .stale { color: var(--bad); background: rgba(239,68,68,.15); }
     .no_data { color: var(--warn); background: rgba(245,158,11,.14); }
+    .warning { color: var(--warn); background: rgba(245,158,11,.16); }
+    .issue-critical { color: var(--bad); }
+    .issue-warning { color: var(--warn); }
+    .issue-info { color: var(--accent); }
     .overview-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -231,7 +235,7 @@
       <h2>Recent Issues</h2>
       <ul class="issue-list">
         {% for issue in issues %}
-        <li><strong>{{ issue.severity }}</strong> {{ issue.symbol }}: {{ issue.message }}</li>
+        <li class="issue-{{ issue.severity }}"><strong>{{ issue.severity }}</strong> {{ issue.symbol }} [{{ issue.category }}]: {{ issue.message }}</li>
         {% endfor %}
       </ul>
     </section>
@@ -278,7 +282,7 @@
           | reason: {{ instance.latest_reason }}
         </p>
         {% if instance.issues %}
-        <p class="muted" style="margin: 8px 0 0 0;">{{ instance.issues|length }} issue(s): {{ instance.issues[0].message }}</p>
+        <p class="muted" style="margin: 8px 0 0 0;">{{ instance.issues|length }} issue(s): {{ instance.issues[0].category }} - {{ instance.issues[0].message }}</p>
         {% endif %}
       </section>
       {% endfor %}
@@ -369,7 +373,7 @@
         {% if instance.issues %}
         <ul class="issue-list">
           {% for issue in instance.issues %}
-          <li><strong>{{ issue.severity }}</strong> {{ issue.category }}: {{ issue.message }}</li>
+          <li class="issue-{{ issue.severity }}"><strong>{{ issue.severity }}</strong> {{ issue.category }}: {{ issue.message }}</li>
           {% endfor %}
         </ul>
         {% else %}
