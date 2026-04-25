@@ -26,7 +26,7 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
 
     assert status_response.status_code == 200
     payload = status_response.get_json()
-    assert set(payload) >= {"status_updated_utc", "aggregate_state", "instances", "issues"}
+    assert set(payload) >= {"status_updated_utc", "aggregate_state", "instances", "issues", "recent_activity_columns", "recent_activity_rows"}
     assert payload["instances"][0]["label"] == "BTC/USD"
     assert set(payload["instances"][0]) >= {
         "status",
@@ -47,6 +47,7 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert health_response.get_json()["ok"] is True
     assert page_response.status_code == 200
     assert b"Trading Bot Monitor" in page_response.data
+    assert b"Recent Decisions Across Monitored Instances" in page_response.data
 
 
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):

@@ -156,7 +156,7 @@ def test_fixture_states_map_to_distinct_dashboard_statuses(tmp_path):
         "stale": "stale",
         "failed": "failed",
         "malformed": "no_data",
-        "broker_rejection": "warning",
+        "broker_rejection": "live",
         "no_data": "no_data",
     }
 
@@ -198,3 +198,78 @@ def test_dashboard_status_includes_recent_issue_summaries_for_problem_states(tmp
 
     assert payload["aggregate_state"] == "failed"
     assert {"blocked", "stale_data", "failed", "malformed_csv", "broker_rejection"} <= categories
+
+
+def test_broker_rejection_keeps_live_instance_visible_as_live_with_warning(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "broker_rejection", "broker_rejection", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    summary = summarize_instance(instance)
+
+    assert summary.status.state == "live"
+    assert summary.status.severity == "warning"
+    assert any(issue.category == "broker_rejection" for issue in summary.issues)
+
+
+def test_dashboard_status_includes_cross_instance_recent_activity(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+            ),
+        )
+    )
+
+    assert payload["recent_activity_columns"][1] == "instance_label"
+    labels = {row["instance_label"] for row in payload["recent_activity_rows"]}
+    assert {"BTC/USD", "ETH/USD"} <= labels
+
+
+def test_monitor_reads_snapshot_rows_with_iso_timestamps(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    snapshot_path = paths["snapshot"]
+    snapshot_path.write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                "2026-04-25T17:00:00+00:00,live,BTC/USD,100.00,90.00,0.0001,0.00",
+                "2026-04-25T17:05:00+00:00,live,BTC/USD,101.50,88.00,0.0002,1.50",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=snapshot_path,
+    )
+
+    payload = dashboard_status((instance,))
+
+    assert payload["instances"][0]["portfolio_value"] == 101.5
+    assert payload["instances"][0]["day_pnl"] == 1.5
