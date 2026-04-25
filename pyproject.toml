@@ -37,6 +37,7 @@ sentiment = [
 
 [project.scripts]
 tradingbot = "tradingbot.app.main:main"
+tradingbot-monitor = "tradingbot.app.tray:main"
 
 [tool.setuptools]
 packages = ["tradingbot", "tradingbot.app", "tradingbot.config", "tradingbot.data", "tradingbot.execution", "tradingbot.risk", "tradingbot.sentiment", "tradingbot.strategy"]

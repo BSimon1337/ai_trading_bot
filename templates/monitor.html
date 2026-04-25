@@ -43,6 +43,7 @@
       margin: 0;
     }
     .muted { color: var(--muted); font-size: 13px; }
+    .local-time { white-space: nowrap; }
     .status {
       padding: 4px 10px;
       border-radius: 999px;
@@ -220,7 +221,7 @@
   <div class="wrap">
     <div class="head">
       <h1 class="title">Trading Bot Monitor</h1>
-      <div class="muted">state {{ aggregate_state }} | updated {{ status_updated_utc }}</div>
+      <div class="muted">state {{ aggregate_state }} | updated <span class="local-time">{{ status_updated_utc }}</span></div>
     </div>
 
     {% if not instances %}
@@ -241,12 +242,34 @@
     </section>
     {% endif %}
 
+    <section class="panel">
+      <h2>Recent Decisions Across Monitored Instances</h2>
+      {% if recent_activity_rows %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for c in recent_activity_columns %}<th>{{ c }}</th>{% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in recent_activity_rows %}
+            <tr>{% for c in recent_activity_columns %}<td>{{ r[c] }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty">No recent decisions across monitored instances yet.</div>
+      {% endif %}
+    </section>
+
     <div class="overview-grid">
       {% for instance in instances %}
       <section class="instance-card">
         <div class="instance-head">
           <h2 class="instance-name">{{ instance.label }}</h2>
-          <span class="status {{ instance.status.state }}">{{ instance.status.state }}</span>
+          <span class="status {{ instance.status.state }}">{{ instance.status.state }}{% if instance.status.severity == "warning" %} / warning{% endif %}</span>
         </div>
         <div class="mini-grid">
           <div class="mini">
@@ -387,6 +410,35 @@
   <script>
     const instances = {{ instances|tojson }};
 
+    function formatTimestampValue(value) {
+      if (!value || typeof value !== "string") return null;
+      let normalized = value.trim();
+      if (!normalized) return null;
+      if (normalized.endsWith(" UTC")) {
+        normalized = normalized.replace(" UTC", "Z").replace(" ", "T");
+      }
+      const parsed = new Date(normalized);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return parsed.toLocaleString([], {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      });
+    }
+
+    function convertTimestampNode(node) {
+      const formatted = formatTimestampValue(node.textContent);
+      if (!formatted) return;
+      node.dataset.utcValue = node.textContent.trim();
+      node.textContent = formatted;
+      node.title = node.dataset.utcValue;
+      node.classList.add("local-time");
+    }
+
     function drawLine(canvasId, points, lineColor) {
       const canvas = document.getElementById(canvasId);
       if (!canvas || !points || points.length < 2) return;
@@ -481,6 +533,16 @@
       }
     } catch (err) {
     }
+
+    document.querySelectorAll("td, th, .muted, .card .v, .issue-list li").forEach((node) => {
+      const text = node.textContent.trim();
+      if (
+        text.includes(" UTC") ||
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(text)
+      ) {
+        convertTimestampNode(node);
+      }
+    });
   </script>
 </body>
 </html>

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
+
+import pandas as pd
 
 from tradingbot.strategy.lumibot_strategy import SentimentMLStrategy
 
@@ -25,6 +28,8 @@ def test_crypto_order_uses_fractional_base_quote_assets():
     )()
     strategy._trades_today = 0
     strategy._pending_trade_equity_anchor = None
+    strategy._deferred_crypto_order_qty = 0.0
+    strategy._deferred_crypto_order_side = None
     strategy.fill_log_path = None
 
     observed: dict[str, object] = {}
@@ -67,6 +72,8 @@ def test_crypto_order_rejection_is_not_logged_as_submitted():
     )()
     strategy._trades_today = 0
     strategy._pending_trade_equity_anchor = None
+    strategy._deferred_crypto_order_qty = 0.0
+    strategy._deferred_crypto_order_side = None
     strategy.fill_log_path = None
 
     observed: dict[str, object] = {}
@@ -83,3 +90,141 @@ def test_crypto_order_rejection_is_not_logged_as_submitted():
     assert result["executed"] is False
     assert result["reason"] == "broker_error"
     assert "fill_row" not in observed
+
+
+def test_crypto_order_below_min_notional_is_skipped_before_broker_submission():
+    strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
+    strategy.symbol = "BTC/USD"
+    strategy.mode = "live"
+    strategy.is_crypto = True
+    strategy.asset_class = "crypto"
+    strategy.cash_at_risk = 0.2
+    strategy.slippage_bps = 0.0
+    strategy.max_notional_per_order_usd = 25.0
+    strategy.risk_manager = type(
+        "FakeRiskManager",
+        (),
+        {
+            "limits": type("FakeLimits", (), {"allow_short": False, "max_gross_leverage": 1.0})(),
+            "max_position_quantity": lambda self, portfolio_value, last_price, allow_fractional=False: 25.0 / last_price,
+            "estimate_gross_leverage": lambda self, current_qty, proposed_delta_qty, price, portfolio_value: 0.25,
+        },
+    )()
+    strategy._trades_today = 0
+    strategy._pending_trade_equity_anchor = None
+    strategy._deferred_crypto_order_qty = 0.0
+    strategy._deferred_crypto_order_side = None
+    strategy.fill_log_path = None
+
+    observed: dict[str, object] = {"create_order_called": False}
+    strategy.get_last_price = lambda asset, quote=None: 80_000.0
+    strategy.get_cash = lambda: 0.10
+    strategy._get_portfolio_value = lambda: 100.0
+    strategy._current_position_qty = lambda: 0.0
+    strategy.create_order = lambda *args, **kwargs: observed.update(create_order_called=True)
+    strategy.submit_order = lambda order: observed.update(submit_order_called=True)
+
+    result = strategy._submit_sized_order("buy")
+
+    assert result["executed"] is False
+    assert result["reason"] == "crypto_order_below_min_notional_accumulating"
+    assert observed["create_order_called"] is False
+    assert strategy._deferred_crypto_order_qty > 0
+    assert strategy._deferred_crypto_order_side == "buy"
+
+
+def test_crypto_order_accumulates_until_minimum_notional_then_submits():
+    strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
+    strategy.symbol = "BTC/USD"
+    strategy.mode = "live"
+    strategy.is_crypto = True
+    strategy.asset_class = "crypto"
+    strategy.cash_at_risk = 1.0
+    strategy.slippage_bps = 0.0
+    strategy.max_notional_per_order_usd = 25.0
+    strategy.risk_manager = type(
+        "FakeRiskManager",
+        (),
+        {
+            "limits": type("FakeLimits", (), {"allow_short": False, "max_gross_leverage": 1.0})(),
+            "max_position_quantity": lambda self, portfolio_value, last_price, allow_fractional=False: 25.0 / last_price,
+            "estimate_gross_leverage": lambda self, current_qty, proposed_delta_qty, price, portfolio_value: 0.25,
+        },
+    )()
+    strategy._trades_today = 0
+    strategy._pending_trade_equity_anchor = None
+    strategy._deferred_crypto_order_qty = 0.0
+    strategy._deferred_crypto_order_side = None
+    strategy.fill_log_path = None
+
+    observed: dict[str, object] = {}
+    cash_state = {"value": 0.50}
+    strategy.get_last_price = lambda asset, quote=None: 80_000.0
+    strategy.get_cash = lambda: cash_state["value"]
+    strategy._get_portfolio_value = lambda: 100.0
+    strategy._current_position_qty = lambda: 0.0
+    strategy.get_datetime = lambda: type("FakeDate", (), {"isoformat": lambda self: "2026-04-12T00:00:00"})()
+    strategy._append_csv = lambda path, row: observed.update(fill_row=row)
+    strategy.create_order = lambda asset, qty, side, **kwargs: observed.update(order=(asset, qty, side, kwargs)) or type("Order", (), {"identifier": "order-1"})()
+    strategy.submit_order = lambda order: type("Submission", (), {"identifier": "submission-1"})()
+
+    first = strategy._submit_sized_order("buy")
+    cash_state["value"] = 0.60
+    second = strategy._submit_sized_order("buy")
+
+    assert first["executed"] is False
+    assert first["reason"] == "crypto_order_below_min_notional_accumulating"
+    assert second["executed"] is True
+    assert observed["order"][1] == Decimal("0.00001375")
+    assert strategy._deferred_crypto_order_qty == 0.0
+    assert strategy._deferred_crypto_order_side is None
+
+
+def test_crypto_decision_logging_keeps_fractional_submitted_quantity():
+    strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
+    strategy.symbol = "BTC/USD"
+    strategy.mode = "live"
+    strategy.is_crypto = True
+    strategy.asset_class = "crypto"
+    strategy.kill_switch = False
+    strategy._trades_today = 0
+    strategy.max_trades_per_day = 50
+    strategy._cooldown_until = None
+    strategy._consecutive_losses = 0
+    strategy.max_consecutive_losses = 3
+    strategy.sentiment_probability_threshold = 0.7
+    strategy._day_anchor_equity = 100.0
+    strategy.decision_log_path = Path("logs/test/decisions.csv")
+    strategy.risk_manager = type(
+        "FakeRiskManager",
+        (),
+        {
+            "limits": type("FakeLimits", (), {"allow_short": False})(),
+            "breaches_daily_loss": lambda self, day_start_equity, current_equity: False,
+        },
+    )()
+
+    observed: dict[str, object] = {}
+    strategy._reset_day_anchor_if_needed = lambda: None
+    strategy._log_snapshot_if_due = lambda: None
+    strategy._set_cooldown_if_recent_trade_lost = lambda: None
+    strategy._get_portfolio_value = lambda: 100.0
+    strategy.get_cash = lambda: 80.0
+    strategy.get_datetime = lambda: pd.Timestamp("2026-04-25T17:00:00Z")
+    strategy._get_sentiment = lambda: (1.0, "neutral")
+    strategy.data_handler = type("FakeDataHandler", (), {"last_news_source": "external"})()
+    strategy._get_model_signal = lambda: ("buy", 0.75)
+    strategy._is_market_data_stale = lambda: False
+    strategy._submit_sized_order = lambda side: {
+        "executed": True,
+        "reason": "submitted",
+        "quantity": 0.00018074,
+        "order_id": "order-1",
+    }
+    strategy._append_csv = lambda path, row: observed.update(decision_row=row)
+
+    strategy.on_trading_iteration()
+
+    assert observed["decision_row"]["action"] == "buy"
+    assert observed["decision_row"]["result"] == "submitted"
+    assert observed["decision_row"]["quantity"] == 0.00018074

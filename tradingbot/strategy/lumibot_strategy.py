@@ -20,6 +20,8 @@ from tradingbot.strategy.signals import choose_trade_action
 
 LOGGER = logging.getLogger(__name__)
 
+MIN_CRYPTO_ORDER_NOTIONAL_USD = 1.0
+
 
 class SentimentMLStrategy(Strategy):
     def initialize(
@@ -96,11 +98,14 @@ class SentimentMLStrategy(Strategy):
         self._day_anchor_date: date | None = None
         self._day_anchor_equity: float | None = None
         self._last_snapshot_date: date | None = None
+        self._last_snapshot_timestamp = None
         self._trades_today = 0
         self._cooldown_until = None
         self._pending_trade_equity_anchor = None
         self._consecutive_losses = 0
         self._last_features_timestamp = None
+        self._deferred_crypto_order_qty = 0.0
+        self._deferred_crypto_order_side: str | None = None
 
         self._ensure_log_files()
 
@@ -232,17 +237,28 @@ class SentimentMLStrategy(Strategy):
             self._trades_today = 0
             self._cooldown_until = None
 
-    def _log_daily_snapshot_once(self) -> None:
-        now_date = self.get_datetime().date()
-        if self._last_snapshot_date == now_date:
+    def _log_snapshot_if_due(self) -> None:
+        now = self.get_datetime()
+        now_date = now.date()
+        if self.is_crypto:
+            if self._last_snapshot_timestamp is not None:
+                elapsed = pd.to_datetime(now, utc=True, errors="coerce") - pd.to_datetime(
+                    self._last_snapshot_timestamp,
+                    utc=True,
+                    errors="coerce",
+                )
+                if pd.notna(elapsed) and elapsed < Timedelta(minutes=1):
+                    return
+        elif self._last_snapshot_date == now_date:
             return
         self._last_snapshot_date = now_date
+        self._last_snapshot_timestamp = now
         anchor = self._day_anchor_equity if self._day_anchor_equity is not None else self._get_portfolio_value()
         current = self._get_portfolio_value()
         self._append_csv(
             self.daily_snapshot_path,
             {
-                "date": str(now_date),
+                "date": now.isoformat(),
                 "mode": self.mode,
                 "symbol": self.symbol,
                 "portfolio_value": round(current, 6),
@@ -445,7 +461,29 @@ class SentimentMLStrategy(Strategy):
         if delta_qty <= 0:
             return {"executed": False, "reason": "delta_qty_zero", "quantity": 0, "order_id": ""}
 
+        if self.is_crypto:
+            if self._deferred_crypto_order_side not in {None, side}:
+                self._deferred_crypto_order_qty = 0.0
+                self._deferred_crypto_order_side = None
+
+            deferred_qty = self._deferred_crypto_order_qty if self._deferred_crypto_order_side == side else 0.0
+            if deferred_qty > 0:
+                if side == "buy":
+                    max_buy_delta = max(0.0, max_position_qty - current_qty)
+                    delta_qty = min(max_buy_delta, float(delta_qty) + deferred_qty)
+                else:
+                    delta_qty = min(float(delta_qty) + deferred_qty, max(0.0, current_qty))
+
         order_notional = abs(float(delta_qty) * float(last_price))
+        if self.is_crypto and order_notional < MIN_CRYPTO_ORDER_NOTIONAL_USD:
+            self._deferred_crypto_order_qty = float(delta_qty)
+            self._deferred_crypto_order_side = side
+            return {
+                "executed": False,
+                "reason": "crypto_order_below_min_notional_accumulating",
+                "quantity": float(delta_qty),
+                "order_id": "",
+            }
         if order_notional > float(self.max_notional_per_order_usd):
             raw_capped_qty = float(self.max_notional_per_order_usd) / max(float(last_price), 0.01)
             capped_qty = raw_capped_qty if self.is_crypto else floor(raw_capped_qty)
@@ -453,6 +491,15 @@ class SentimentMLStrategy(Strategy):
                 return {"executed": False, "reason": "max_notional_blocked", "quantity": 0, "order_id": ""}
             delta_qty = min(delta_qty, capped_qty)
             order_notional = abs(float(delta_qty) * float(last_price))
+            if self.is_crypto and order_notional < MIN_CRYPTO_ORDER_NOTIONAL_USD:
+                self._deferred_crypto_order_qty = float(delta_qty)
+                self._deferred_crypto_order_side = side
+                return {
+                    "executed": False,
+                    "reason": "crypto_order_below_min_notional_accumulating",
+                    "quantity": float(delta_qty),
+                    "order_id": "",
+                }
 
         projected_leverage = self.risk_manager.estimate_gross_leverage(
             current_qty=current_qty,
@@ -475,6 +522,9 @@ class SentimentMLStrategy(Strategy):
                 "quantity": float(delta_qty),
                 "order_id": order_id,
             }
+        if self.is_crypto:
+            self._deferred_crypto_order_qty = 0.0
+            self._deferred_crypto_order_side = None
         self._trades_today += 1
         self._pending_trade_equity_anchor = portfolio_value
         self._append_csv(
@@ -514,9 +564,12 @@ class SentimentMLStrategy(Strategy):
         sentiment_probability: float | None,
         sentiment_label: str | None,
         sentiment_source: str | None,
-        quantity: int,
+        quantity: float,
         reason: str,
     ) -> None:
+        normalized_quantity: float | int = round(float(quantity), 8)
+        if not self.is_crypto:
+            normalized_quantity = int(quantity)
         self._append_csv(
             self.decision_log_path,
             {
@@ -532,7 +585,7 @@ class SentimentMLStrategy(Strategy):
                 if sentiment_probability is None
                 else round(float(sentiment_probability), 6),
                 "sentiment_label": "" if sentiment_label is None else sentiment_label,
-                "quantity": quantity,
+                "quantity": normalized_quantity,
                 "portfolio_value": round(self._get_portfolio_value(), 6),
                 "cash": round(float(self.get_cash()), 6),
                 "reason": reason,
@@ -542,7 +595,7 @@ class SentimentMLStrategy(Strategy):
 
     def on_trading_iteration(self):
         self._reset_day_anchor_if_needed()
-        self._log_daily_snapshot_once()
+        self._log_snapshot_if_due()
         self._set_cooldown_if_recent_trade_lost()
 
         if self.kill_switch:
@@ -603,7 +656,7 @@ class SentimentMLStrategy(Strategy):
                 probability,
                 sentiment,
                 sentiment_source,
-                int(result.get("quantity", 0)),
+                float(result.get("quantity", 0.0)),
                 result.get("reason", ""),
             )
             return

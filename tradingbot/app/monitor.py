@@ -63,6 +63,7 @@ class FillSummary:
 @dataclass(frozen=True)
 class SnapshotSummary:
     date: str = ""
+    timestamp: str = ""
     mode: str = ""
     symbol: str = ""
     portfolio_value: str = ""
@@ -336,6 +337,20 @@ def _recent_rows(dataframe: pd.DataFrame, limit: int = 15) -> list[dict[str, Any
     return recent.fillna("").to_dict(orient="records")
 
 
+def _normalize_snapshot_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
+    if dataframe.empty:
+        return dataframe
+    normalized = dataframe.copy()
+    if "timestamp" not in normalized.columns:
+        if "date" in normalized.columns:
+            normalized["timestamp"] = pd.to_datetime(normalized["date"], errors="coerce", utc=True)
+        else:
+            normalized["timestamp"] = pd.NaT
+    else:
+        normalized["timestamp"] = pd.to_datetime(normalized["timestamp"], errors="coerce", utc=True)
+    return normalized.sort_values("timestamp")
+
+
 def _latest_timestamp(*frames: pd.DataFrame) -> pd.Timestamp | None:
     timestamps: list[pd.Timestamp] = []
     for frame in frames:
@@ -361,6 +376,8 @@ def _classify_status(
 ) -> RuntimeStatus:
     if latest_decision is None:
         return RuntimeStatus("no_data", "warning", "No runtime evidence found.", age_minutes)
+    live_like = latest_decision.mode in {"active-live", "live"}
+    paper_like = latest_decision.mode == "paper"
     if latest_decision.mode == "blocked-live" or latest_decision.result == "blocked":
         return RuntimeStatus("blocked", "critical", latest_decision.reason or "Live run was blocked.", age_minutes)
     if latest_decision.result == "failed":
@@ -377,12 +394,42 @@ def _classify_status(
         top_issue = next(
             issue for issue in issues if issue.category in {"malformed_csv", "broker_rejection", "rejected", "canceled"}
         )
-        return RuntimeStatus("warning", "warning", top_issue.message or "Recent runtime warning found.", age_minutes)
-    if latest_decision.mode == "active-live" or latest_decision.mode == "live":
+        if live_like:
+            return RuntimeStatus("live", "warning", top_issue.message or "Recent runtime warning found.", age_minutes)
+        if paper_like:
+            return RuntimeStatus("paper", "warning", top_issue.message or "Recent runtime warning found.", age_minutes)
+        return RuntimeStatus("running", "warning", top_issue.message or "Recent runtime warning found.", age_minutes)
+    if live_like:
         return RuntimeStatus("live", "ok", "Live runtime evidence is updating.", age_minutes)
-    if latest_decision.mode == "paper":
+    if paper_like:
         return RuntimeStatus("paper", "info", "Paper runtime evidence is updating.", age_minutes)
     return RuntimeStatus("running", "ok", "Runtime evidence is updating.", age_minutes)
+
+
+def _collect_recent_activity(instances: list[DashboardInstance], limit: int = 30) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for instance in instances:
+        decisions = normalize_timestamps(safe_read_csv(instance.decision_log_path, source="decisions").dataframe)
+        if decisions.empty:
+            continue
+        recent = decisions.tail(limit).copy()
+        for _, row in recent.iterrows():
+            row_dict = {column: _clean_value(row.get(column, "")) for column in recent.columns}
+            row_dict["instance_label"] = instance.label
+            rows.append(row_dict)
+    def sort_key(item: dict[str, Any]) -> pd.Timestamp:
+        value = pd.to_datetime(item.get("timestamp"), errors="coerce", utc=True)
+        if pd.isna(value):
+            return pd.Timestamp.min.tz_localize("UTC")
+        return value
+    rows.sort(key=sort_key, reverse=True)
+    normalized_rows: list[dict[str, Any]] = []
+    for row in rows[:limit]:
+        timestamp = pd.to_datetime(row.get("timestamp"), errors="coerce", utc=True)
+        if pd.notna(timestamp):
+            row["timestamp"] = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+        normalized_rows.append(row)
+    return normalized_rows
 
 
 def _issues_from_evidence(
@@ -457,7 +504,7 @@ def summarize_instance(
     snapshot_result = safe_read_csv(instance.snapshot_log_path, source="snapshot")
     decisions = normalize_timestamps(decision_result.dataframe)
     fills = normalize_timestamps(fill_result.dataframe)
-    snapshot = snapshot_result.dataframe.copy()
+    snapshot = _normalize_snapshot_frame(snapshot_result.dataframe)
 
     latest_decision = (
         _row_to_summary(decisions.iloc[-1].to_dict(), DecisionSummary) if not decisions.empty else None
@@ -498,7 +545,7 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
     decisions = normalize_timestamps(safe_read_csv(instance.decision_log_path, source="decisions").dataframe)
     fills = normalize_timestamps(safe_read_csv(instance.fill_log_path, source="fills").dataframe)
-    snapshot = safe_read_csv(instance.snapshot_log_path, source="snapshot").dataframe
+    snapshot = _normalize_snapshot_frame(safe_read_csv(instance.snapshot_log_path, source="snapshot").dataframe)
     now_utc_date = datetime.now(timezone.utc).date()
     decisions_today = 0
     fills_today = 0
@@ -578,11 +625,14 @@ def dashboard_status(
     configured = instances if instances is not None else load_monitor_configuration(config=config).instances
     summarized = [summarize_instance(instance, stale_after_minutes=stale_after_minutes) for instance in configured]
     issues = [issue for instance in summarized for issue in instance.issues]
+    recent_activity = _collect_recent_activity(summarized)
     payload = {
         "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "aggregate_state": _aggregate_state(summarized),
         "instances": [_instance_payload(instance) for instance in summarized],
         "issues": [_issue_to_dict(issue) for issue in issues],
+        "recent_activity_columns": ["timestamp", "instance_label", "mode", "symbol", "action", "action_source", "quantity", "reason", "result"],
+        "recent_activity_rows": recent_activity,
     }
     return redact_sensitive_values(payload)
 
@@ -592,6 +642,7 @@ def create_app(
     instances: tuple[DashboardInstance, ...] | None = None,
     config: BotConfig | None = None,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+    refresh_seconds: int = DEFAULT_REFRESH_SECONDS,
 ) -> Flask:
     app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[2] / "templates"))
 
@@ -601,7 +652,7 @@ def create_app(
     @app.route("/")
     def dashboard():
         payload = status_payload()
-        return render_template("monitor.html", **payload, refresh_seconds=DEFAULT_REFRESH_SECONDS)
+        return render_template("monitor.html", **payload, refresh_seconds=refresh_seconds)
 
     @app.route("/health")
     def health():

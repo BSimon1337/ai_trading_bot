@@ -112,10 +112,54 @@ Then open:
 http://localhost:8080
 ```
 
+Run the monitor like a local app from the package entrypoint:
+
+```powershell
+tradingbot-monitor
+```
+
+Run the monitor without the tray icon:
+
+```powershell
+tradingbot-monitor --no-tray
+```
+
+Useful monitor options:
+
+- `--host 127.0.0.1`
+- `--port 8080`
+- `--refresh-seconds 15`
+- `--no-tray`
+- `--read-only`
+
+Stopping the monitor:
+
+- Browser-only mode: `Ctrl+C` in the terminal running `tradingbot-monitor --no-tray`
+- Tray mode: use `Exit Monitor` from the tray menu, or `Ctrl+C` if launched in the foreground shell
+
+The monitor remains read-only. It does not place, approve, cancel, or modify trades.
+
+Monitor troubleshooting:
+
+- Blank browser page: confirm you launched from the repo root or used `tradingbot-monitor`, then open the exact host and port you passed on the command line.
+- Wrong working directory: run `cd C:\Users\Beau\ai_trading_bot` before `python monitor_app.py` or module-style commands so templates and local logs resolve correctly.
+- Missing logs: the monitor still starts, but it will show `no_data` or warning states until runtime evidence exists under the expected `logs/paper_validation*` paths.
+- Tray unavailable: use `tradingbot-monitor --no-tray` to keep the dashboard usable if `pystray` cannot attach to the local desktop session.
+
+Generated runtime evidence:
+
+- `logs/paper_validation*` contains local operator evidence and should stay out of commits unless you intentionally want to preserve example artifacts.
+
 ## Validation
 
 ```powershell
 python -m pytest tests/unit/test_signal_logic.py tests/unit/test_position_sizing.py tests/unit/test_news_fallback.py tests/unit/test_model_fallback.py tests/smoke/test_backtest_entrypoint.py tests/smoke/test_paper_mode_guardrails.py
+```
+
+Monitor validation:
+
+```powershell
+python -m pytest tests/contract/test_dashboard_monitor_contract.py tests/contract/test_tray_monitor_contract.py tests/unit/test_monitor_data.py tests/unit/test_tray_state.py tests/smoke/test_monitor_entrypoint.py
 ```
 
 ## GitHub Release Flow

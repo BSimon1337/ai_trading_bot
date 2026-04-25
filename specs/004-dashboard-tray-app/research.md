@@ -16,7 +16,7 @@
 
 **Decision**: Use `pystray==0.19.5` for cross-platform tray icon/menu support and `Pillow==11.3.0` for icon image creation/loading.
 
-**Rationale**: `pystray` is a small Python tray library that fits the existing Python-first architecture. PyPI lists `pystray==0.19.5` with an upload date of 2023-09-17, which is well older than the project's 7-day dependency age requirement. Pillow provides the image support expected by pystray; Pillow `11.3.0` was released on 2025-07-01, also older than 7 days as of 2026-04-18.
+**Rationale**: `pystray` is a small Python tray library that fits the existing Python-first architecture. PyPI lists `pystray==0.19.5` with an upload date of 2023-09-17, which is well older than the project's 7-day dependency age requirement. Pillow provides the image support expected by pystray; Pillow `11.3.0` was released on 2025-07-01, also older than 7 days as of 2026-04-25.
 
 **Alternatives considered**:
 
