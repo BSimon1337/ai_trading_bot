@@ -78,17 +78,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T024 [P] [US2] Add tray contract tests for startup, state values, menu labels, and degraded mode in `tests/contract/test_tray_monitor_contract.py`
-- [ ] T025 [P] [US2] Add unit tests for tray state mapping from dashboard aggregate status in `tests/unit/test_tray_state.py`
-- [ ] T026 [P] [US2] Add unit tests proving tray actions do not call trading order APIs in `tests/unit/test_tray_state.py`
+- [x] T024 [P] [US2] Add tray contract tests for startup, state values, menu labels, and degraded mode in `tests/contract/test_tray_monitor_contract.py`
+- [x] T025 [P] [US2] Add unit tests for tray state mapping from dashboard aggregate status in `tests/unit/test_tray_state.py`
+- [x] T026 [P] [US2] Add unit tests proving tray actions do not call trading order APIs in `tests/unit/test_tray_state.py`
 
 ### Implementation for User Story 2
 
-- [ ] T027 [US2] Implement tray state mapping and tooltip/menu model in `tradingbot/app/tray.py`
-- [ ] T028 [US2] Implement pystray icon creation, Open Dashboard, Refresh Status, and Exit Monitor actions in `tradingbot/app/tray.py`
-- [ ] T029 [US2] Implement graceful tray-unavailable fallback that keeps the browser dashboard usable in `tradingbot/app/tray.py`
-- [ ] T030 [US2] Add monitor/tray command handling and safe defaults in `tradingbot/app/tray.py`
-- [ ] T031 [US2] Validate User Story 2 by running tray contract and unit tests in `tests/contract/test_tray_monitor_contract.py` and `tests/unit/test_tray_state.py`
+- [x] T027 [US2] Implement tray state mapping and tooltip/menu model in `tradingbot/app/tray.py`
+- [x] T028 [US2] Implement pystray icon creation, Open Dashboard, Refresh Status, and Exit Monitor actions in `tradingbot/app/tray.py`
+- [x] T029 [US2] Implement graceful tray-unavailable fallback that keeps the browser dashboard usable in `tradingbot/app/tray.py`
+- [x] T030 [US2] Add monitor/tray command handling and safe defaults in `tradingbot/app/tray.py`
+- [x] T031 [US2] Validate User Story 2 by running tray contract and unit tests in `tests/contract/test_tray_monitor_contract.py` and `tests/unit/test_tray_state.py`
 
 **Checkpoint**: Tray presence works through mocked tests and degrades safely.
 
