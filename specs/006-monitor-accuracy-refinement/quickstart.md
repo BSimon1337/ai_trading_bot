@@ -69,6 +69,32 @@ Expected result:
 - Historical malformed or failed files do not dominate the active state.
 - Historical evidence remains available for manual inspection outside the active monitor summary.
 
+## Retention and Archival Guidance
+
+The monitor now treats evidence under archive-like path segments such as `archived`, `archive`, `history`, `historical`, `old`, or `retained` as historical-only context. That evidence can still appear in the bounded historical preview, but it no longer overrides the current live or paper state.
+
+Recommended operating pattern:
+
+- Keep current bot evidence in the normal `logs/paper_validation*` paths.
+- Move older evidence into clearly named archive folders instead of deleting it.
+- If you need custom archive markers, set `MONITOR_ARCHIVE_MARKERS` as a comma-separated list.
+- If you need to tighten or loosen current-state freshness, set `MONITOR_STALE_AFTER_MINUTES`.
+- If you want a shorter or longer historical preview, set `MONITOR_HISTORICAL_ISSUE_LIMIT`.
+
+Example:
+
+```powershell
+$env:MONITOR_STALE_AFTER_MINUTES="180"
+$env:MONITOR_HISTORICAL_ISSUE_LIMIT="5"
+$env:MONITOR_ARCHIVE_MARKERS="archived,history,old"
+```
+
+Expected result:
+
+- Current dashboards stay focused on active evidence.
+- Archived failures remain visible only in the historical context section.
+- Tray severity follows current issues, not retained historical noise.
+
 ## Automated Validation
 
 Run:

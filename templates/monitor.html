@@ -242,6 +242,38 @@
     </section>
     {% endif %}
 
+    {% if notes %}
+    <section class="panel">
+      <h2>Recent Notes</h2>
+      <ul class="issue-list">
+        {% for note in notes %}
+        <li class="issue-info"><strong>info</strong> {{ note.symbol }} [{{ note.category }}]: {{ note.message }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if historical_context.historical_issue_count or historical_context.historical_instance_count %}
+    <section class="panel">
+      <h2>Historical Context</h2>
+      <div class="cards" style="padding: 12px;">
+        <div class="card"><div class="k">Active Window</div><div class="v">{{ historical_context.active_window_minutes }} min</div></div>
+        <div class="card"><div class="k">Historical Instances</div><div class="v">{{ historical_context.historical_instance_count }}</div></div>
+        <div class="card"><div class="k">Historical Issues</div><div class="v">{{ historical_context.historical_issue_count }}</div></div>
+        <div class="card"><div class="k">Issue Preview Limit</div><div class="v">{{ historical_context.historical_issue_limit }}</div></div>
+      </div>
+      {% if historical_context.historical_issues %}
+      <ul class="issue-list">
+        {% for issue in historical_context.historical_issues %}
+        <li class="issue-info"><strong>history</strong> {{ issue.symbol }} [{{ issue.category }}]: {{ issue.message }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="empty">No retained historical issue previews.</div>
+      {% endif %}
+    </section>
+    {% endif %}
+
     <section class="panel">
       <h2>Recent Decisions Across Monitored Instances</h2>
       {% if recent_activity_rows %}
@@ -314,12 +346,32 @@
             <div class="v">{{ instance.latest_mode }} / {{ instance.latest_asset_class }}</div>
           </div>
           <div class="mini">
+            <div class="k">Last Decision</div>
+            <div class="v" style="font-size:14px">{{ instance.last_decision_utc or "Unavailable" }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Last Fill</div>
+            <div class="v" style="font-size:14px">{{ instance.last_fill_utc or "Unavailable" }}</div>
+          </div>
+          <div class="mini">
             <div class="k">Fills Today</div>
             <div class="v">{{ instance.fills_today }}</div>
           </div>
           <div class="mini">
             <div class="k">Cash</div>
             <div class="v">${{ "%.2f"|format(instance.cash) }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Broker Rejections</div>
+            <div class="v">{{ instance.broker_rejection_count }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Evidence Scope</div>
+            <div class="v" style="font-size:14px">{{ instance.evidence_scope }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Historical Issues</div>
+            <div class="v">{{ instance.historical_issue_count }}</div>
           </div>
         </div>
         <p class="muted" style="margin: 12px 0 0 0;">
@@ -364,6 +416,11 @@
         <div class="card"><div class="k">Account Equity</div><div class="v">${{ "%.2f"|format(instance.account_equity) }}</div></div>
         <div class="card"><div class="k">Day PnL</div><div class="v {% if instance.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(instance.day_pnl) }}</div></div>
         <div class="card"><div class="k">Latest Action</div><div class="v">{{ instance.latest_action }}</div></div>
+        <div class="card"><div class="k">Last Decision</div><div class="v" style="font-size:14px">{{ instance.last_decision_utc or "Unavailable" }}</div></div>
+        <div class="card"><div class="k">Last Fill</div><div class="v" style="font-size:14px">{{ instance.last_fill_utc or "Unavailable" }}</div></div>
+        <div class="card"><div class="k">Broker Rejections</div><div class="v">{{ instance.broker_rejection_count }}</div></div>
+        <div class="card"><div class="k">Evidence Scope</div><div class="v">{{ instance.evidence_scope }}</div></div>
+        <div class="card"><div class="k">Historical Issues</div><div class="v">{{ instance.historical_issue_count }}</div></div>
         <div class="card"><div class="k">Mode</div><div class="v">{{ instance.latest_mode }}</div></div>
         <div class="card"><div class="k">Asset Class</div><div class="v">{{ instance.latest_asset_class }}</div></div>
         <div class="card"><div class="k">Action Source</div><div class="v">{{ instance.latest_source }}</div></div>
@@ -441,6 +498,32 @@
         </ul>
         {% else %}
         <div class="empty">No runtime issues detected.</div>
+        {% endif %}
+      </div>
+
+      <div class="panel">
+        <h2>{{ instance.label }} Notes</h2>
+        {% if instance.notes %}
+        <ul class="issue-list">
+          {% for note in instance.notes %}
+          <li class="issue-info"><strong>info</strong> {{ note.category }}: {{ note.message }}</li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No informational notes.</div>
+        {% endif %}
+      </div>
+
+      <div class="panel">
+        <h2>{{ instance.label }} Historical Issue Preview</h2>
+        {% if instance.historical_issues %}
+        <ul class="issue-list">
+          {% for issue in instance.historical_issues %}
+          <li class="issue-info"><strong>history</strong> {{ issue.category }}: {{ issue.message }}</li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty">No bounded historical issue preview for this instance.</div>
         {% endif %}
       </div>
     </section>

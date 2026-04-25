@@ -142,6 +142,30 @@ def create_monitor_fixture(root: Path, state: str, symbol: str = "SPY") -> dict[
     if state == "malformed":
         write_malformed_csv(paths["decisions"])
         return paths
+    if state == "archived_failed":
+        archived_root = root / "archived"
+        archived_paths = {
+            "decisions": archived_root / "decisions.csv",
+            "fills": archived_root / "fills.csv",
+            "snapshot": archived_root / "daily_snapshot.csv",
+        }
+        write_decisions(archived_paths["decisions"], [failed_run_decision(symbol="SYSTEM")])
+        write_fills(archived_paths["fills"], [])
+        write_snapshots(
+            archived_paths["snapshot"],
+            [
+                {
+                    "date": datetime.now(timezone.utc).isoformat(),
+                    "mode": "live" if "/" in symbol else "paper",
+                    "symbol": symbol,
+                    "portfolio_value": "100",
+                    "cash": "100",
+                    "position_qty": "0",
+                    "day_pnl": "0",
+                }
+            ],
+        )
+        return archived_paths
     if state == "mixed_current_historical":
         write_decisions(paths["decisions"], restarted_healthy(symbol=symbol))
         write_fills(paths["fills"], [])

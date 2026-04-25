@@ -74,6 +74,7 @@ def test_tray_monitor_contract_starts_with_expected_menu_and_state():
             "aggregate_state": "paper",
             "instances": [{"label": "SPY"}],
             "issues": [],
+            "notes": [],
         },
         browser_opener=lambda url: True,
         dependencies=TrayDependencies(
@@ -100,6 +101,7 @@ def test_tray_monitor_contract_supports_degraded_mode_without_pystray():
             "aggregate_state": "no_data",
             "instances": [],
             "issues": [],
+            "notes": [],
         },
         dependencies=TrayDependencies(available=False, reason="pystray unavailable"),
     )
@@ -110,3 +112,51 @@ def test_tray_monitor_contract_supports_degraded_mode_without_pystray():
     assert result["reason"] == "pystray unavailable"
     assert result["state"] == "no_data"
     assert controller.icon is None
+
+
+def test_tray_monitor_contract_keeps_notes_out_of_warning_state():
+    controller, result = start_monitor_tray(
+        config=MonitorConfiguration(dashboard_host="127.0.0.1", dashboard_port=8080, instances=()),
+        payload_loader=lambda: {
+            "status_updated_utc": "2026-04-19 12:00:00 UTC",
+            "aggregate_state": "live",
+            "instances": [{"label": "BTC/USD"}],
+            "issues": [],
+            "notes": [{"category": "negative_pnl", "symbol": "BTC/USD"}],
+        },
+        browser_opener=lambda url: True,
+        dependencies=TrayDependencies(
+            available=True,
+            pystray=FakePystray,
+            image_module=FakeImage,
+            image_draw_module=FakeImageDraw,
+        ),
+    )
+
+    assert result["state"] == "live"
+    assert "Notes: 1." in controller.state.tooltip
+    assert "Warnings: 0." not in controller.state.tooltip
+
+
+def test_tray_monitor_contract_shows_historical_context_without_changing_live_state():
+    controller, result = start_monitor_tray(
+        config=MonitorConfiguration(dashboard_host="127.0.0.1", dashboard_port=8080, instances=()),
+        payload_loader=lambda: {
+            "status_updated_utc": "2026-04-19 12:00:00 UTC",
+            "aggregate_state": "live",
+            "instances": [{"label": "BTC/USD"}],
+            "issues": [],
+            "notes": [],
+            "historical_context": {"historical_issue_count": 3},
+        },
+        browser_opener=lambda url: True,
+        dependencies=TrayDependencies(
+            available=True,
+            pystray=FakePystray,
+            image_module=FakeImage,
+            image_draw_module=FakeImageDraw,
+        ),
+    )
+
+    assert result["state"] == "live"
+    assert "Historical: 3." in controller.state.tooltip

@@ -72,18 +72,18 @@
 
 ### Tests for User Story 2
 
-- [ ] T018 [P] [US2] Add unit tests for issue-vs-note classification and broker rejection counting in `tests/unit/test_monitor_data.py`
-- [ ] T019 [P] [US2] Add contract tests for `notes`, `last_decision_utc`, `last_fill_utc`, and `broker_rejection_count` in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T020 [P] [US2] Add tray unit tests ensuring informational notes do not escalate tray severity in `tests/unit/test_tray_state.py`
-- [ ] T021 [P] [US2] Add tray contract tests for refined aggregate counts and status summaries in `tests/contract/test_tray_monitor_contract.py`
+- [x] T018 [P] [US2] Add unit tests for issue-vs-note classification and broker rejection counting in `tests/unit/test_monitor_data.py`
+- [x] T019 [P] [US2] Add contract tests for `notes`, `last_decision_utc`, `last_fill_utc`, and `broker_rejection_count` in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T020 [P] [US2] Add tray unit tests ensuring informational notes do not escalate tray severity in `tests/unit/test_tray_state.py`
+- [x] T021 [P] [US2] Add tray contract tests for refined aggregate counts and status summaries in `tests/contract/test_tray_monitor_contract.py`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Implement distinct issue and informational note extraction paths in `tradingbot/app/monitor.py`
-- [ ] T023 [US2] Add last-decision, last-fill, and broker-rejection summary fields to instance aggregation in `tradingbot/app/monitor.py`
-- [ ] T024 [US2] Update tray state aggregation to use current issue counts while ignoring non-actionable notes in `tradingbot/app/tray.py`
-- [ ] T025 [US2] Update dashboard sections and per-instance cards to show notes separately from issues and surface activity timestamps/rejection counts in `templates/monitor.html`
-- [ ] T026 [US2] Validate User Story 2 by running `tests/unit/test_monitor_data.py`, `tests/unit/test_tray_state.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/contract/test_tray_monitor_contract.py`
+- [x] T022 [US2] Implement distinct issue and informational note extraction paths in `tradingbot/app/monitor.py`
+- [x] T023 [US2] Add last-decision, last-fill, and broker-rejection summary fields to instance aggregation in `tradingbot/app/monitor.py`
+- [x] T024 [US2] Update tray state aggregation to use current issue counts while ignoring non-actionable notes in `tradingbot/app/tray.py`
+- [x] T025 [US2] Update dashboard sections and per-instance cards to show notes separately from issues and surface activity timestamps/rejection counts in `templates/monitor.html`
+- [x] T026 [US2] Validate User Story 2 by running `tests/unit/test_monitor_data.py`, `tests/unit/test_tray_state.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/contract/test_tray_monitor_contract.py`
 
 **Checkpoint**: Operators can distinguish healthy-but-informative context from actual operational problems at a glance.
 
@@ -97,18 +97,18 @@
 
 ### Tests for User Story 3
 
-- [ ] T027 [P] [US3] Add unit tests for retention-window behavior and bounded historical issue reporting in `tests/unit/test_monitor_data.py`
-- [ ] T028 [P] [US3] Add contract tests for active-versus-historical status handling in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T029 [P] [US3] Add smoke coverage for monitor startup against mixed current/historical evidence directories in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T027 [P] [US3] Add unit tests for retention-window behavior and bounded historical issue reporting in `tests/unit/test_monitor_data.py`
+- [x] T028 [P] [US3] Add contract tests for active-versus-historical status handling in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T029 [P] [US3] Add smoke coverage for monitor startup against mixed current/historical evidence directories in `tests/smoke/test_monitor_entrypoint.py`
 
 ### Implementation for User Story 3
 
-- [ ] T030 [US3] Implement retention-window application and bounded historical-context handling in `tradingbot/app/monitor.py`
-- [ ] T031 [US3] Add safe log-retention or archival configuration support and default behavior in `tradingbot/app/monitor.py`
-- [ ] T032 [US3] Surface active-versus-historical evidence context in the dashboard view in `templates/monitor.html`
-- [ ] T033 [US3] Update tray aggregate-state logic so older failures do not dominate after a healthy restart in `tradingbot/app/tray.py`
-- [ ] T034 [US3] Document safe retention or archival operating guidance for monitor evidence in `specs/006-monitor-accuracy-refinement/quickstart.md`
-- [ ] T035 [US3] Validate User Story 3 by running `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, `tests/unit/test_tray_state.py`, and `tests/smoke/test_monitor_entrypoint.py`
+- [x] T030 [US3] Implement retention-window application and bounded historical-context handling in `tradingbot/app/monitor.py`
+- [x] T031 [US3] Add safe log-retention or archival configuration support and default behavior in `tradingbot/app/monitor.py`
+- [x] T032 [US3] Surface active-versus-historical evidence context in the dashboard view in `templates/monitor.html`
+- [x] T033 [US3] Update tray aggregate-state logic so older failures do not dominate after a healthy restart in `tradingbot/app/tray.py`
+- [x] T034 [US3] Document safe retention or archival operating guidance for monitor evidence in `specs/006-monitor-accuracy-refinement/quickstart.md`
+- [x] T035 [US3] Validate User Story 3 by running `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, `tests/unit/test_tray_state.py`, and `tests/smoke/test_monitor_entrypoint.py`
 
 **Checkpoint**: Historical evidence remains useful for debugging without contaminating the current monitor view.
 
