@@ -312,6 +312,20 @@ def _status_to_dict(status: RuntimeStatus) -> dict[str, Any]:
     }
 
 
+def _sort_issues(issues: list[IssueSummary]) -> list[IssueSummary]:
+    severity_rank = {"critical": 0, "warning": 1, "info": 2}
+    return sorted(
+        issues,
+        key=lambda issue: (
+            severity_rank.get(issue.severity, 99),
+            issue.timestamp,
+            issue.category,
+            issue.symbol,
+        ),
+        reverse=False,
+    )
+
+
 def _recent_rows(dataframe: pd.DataFrame, limit: int = 15) -> list[dict[str, Any]]:
     if dataframe.empty:
         return []
@@ -351,10 +365,19 @@ def _classify_status(
         return RuntimeStatus("blocked", "critical", latest_decision.reason or "Live run was blocked.", age_minutes)
     if latest_decision.result == "failed":
         return RuntimeStatus("failed", "critical", latest_decision.reason or "Runtime failed.", age_minutes)
-    if any(issue.severity == "critical" for issue in issues):
-        return RuntimeStatus("failed", "critical", "Recent critical issue found.", age_minutes)
+    critical_issues = [issue for issue in issues if issue.severity == "critical"]
+    if critical_issues:
+        top_issue = critical_issues[0]
+        if top_issue.category == "blocked":
+            return RuntimeStatus("blocked", "critical", top_issue.message or "Live run was blocked.", age_minutes)
+        return RuntimeStatus("failed", "critical", top_issue.message or "Recent critical issue found.", age_minutes)
     if age_minutes is not None and age_minutes > stale_after_minutes:
         return RuntimeStatus("stale", "warning", f"Latest evidence is {age_minutes:.1f} minutes old.", age_minutes)
+    if any(issue.category in {"malformed_csv", "broker_rejection", "rejected", "canceled"} for issue in issues):
+        top_issue = next(
+            issue for issue in issues if issue.category in {"malformed_csv", "broker_rejection", "rejected", "canceled"}
+        )
+        return RuntimeStatus("warning", "warning", top_issue.message or "Recent runtime warning found.", age_minutes)
     if latest_decision.mode == "active-live" or latest_decision.mode == "live":
         return RuntimeStatus("live", "ok", "Live runtime evidence is updating.", age_minutes)
     if latest_decision.mode == "paper":
@@ -366,8 +389,22 @@ def _issues_from_evidence(
     read_results: tuple[CsvReadResult, ...],
     decisions: pd.DataFrame,
     fills: pd.DataFrame,
+    snapshot: pd.DataFrame,
+    age_minutes: float | None,
+    stale_after_minutes: int,
 ) -> list[IssueSummary]:
     issues = [result.issue for result in read_results if result.issue is not None]
+    if age_minutes is not None and age_minutes > stale_after_minutes:
+        issues.append(
+            IssueSummary(
+                timestamp=_utc_now_iso(),
+                severity="warning",
+                symbol="SYSTEM",
+                category="stale_data",
+                message=f"Latest runtime evidence is {age_minutes:.1f} minutes old.",
+                source="monitor",
+            )
+        )
     for frame, source in ((decisions, "decisions"), (fills, "fills")):
         if frame.empty:
             continue
@@ -375,17 +412,39 @@ def _issues_from_evidence(
             reason = str(row.get("reason", ""))
             result = str(row.get("result", ""))
             if result in {"failed", "blocked", "rejected", "canceled"} or reason.startswith("broker_"):
+                if result == "blocked":
+                    category = "blocked"
+                elif result in {"rejected", "canceled"} or reason.startswith("broker_"):
+                    category = "broker_rejection"
+                else:
+                    category = result or "broker_issue"
                 issues.append(
                     IssueSummary(
                         timestamp=_clean_value(row.get("timestamp")) or _utc_now_iso(),
                         severity="critical" if result in {"failed", "blocked"} else "warning",
                         symbol=_clean_value(row.get("symbol")) or "SYSTEM",
-                        category=result or "broker_issue",
+                        category=category,
                         message=reason or result,
                         source=source,
                     )
                 )
-    return [issue for issue in issues if issue is not None]
+    if not snapshot.empty:
+        recent_snapshot = snapshot.tail(5).to_dict(orient="records")
+        for row in recent_snapshot:
+            day_pnl = to_float(row.get("day_pnl"), 0.0)
+            if day_pnl < 0:
+                issues.append(
+                    IssueSummary(
+                        timestamp=_utc_now_iso(),
+                        severity="info",
+                        symbol=_clean_value(row.get("symbol")) or "SYSTEM",
+                        category="negative_pnl",
+                        message=f"Latest day PnL is negative: {day_pnl:.2f}",
+                        source="snapshot",
+                    )
+                )
+                break
+    return [issue for issue in _sort_issues([issue for issue in issues if issue is not None])]
 
 
 def summarize_instance(
@@ -409,7 +468,14 @@ def summarize_instance(
     )
     last_timestamp = _latest_timestamp(decisions, fills)
     age = _age_minutes(last_timestamp)
-    issues = _issues_from_evidence((decision_result, fill_result, snapshot_result), decisions, fills)
+    issues = _issues_from_evidence(
+        (decision_result, fill_result, snapshot_result),
+        decisions,
+        fills,
+        snapshot,
+        age,
+        stale_after_minutes,
+    )
     status = _classify_status(latest_decision, issues, age, stale_after_minutes)
     return DashboardInstance(
         label=instance.label,

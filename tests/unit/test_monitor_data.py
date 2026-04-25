@@ -15,6 +15,7 @@ from tradingbot.app.monitor import (
     redact_sensitive_values,
     safe_read_csv,
     sanitize_symbol_for_path,
+    summarize_instance,
     to_float,
     to_int,
 )
@@ -147,3 +148,53 @@ def test_dashboard_status_aggregates_at_least_ten_instances(tmp_path):
     assert payload["aggregate_state"] in {"paper", "running"}
     assert len(payload["instances"]) == 10
     assert all(item["latest_reason"] for item in payload["instances"])
+
+
+def test_fixture_states_map_to_distinct_dashboard_statuses(tmp_path):
+    expected = {
+        "blocked_live": "blocked",
+        "stale": "stale",
+        "failed": "failed",
+        "malformed": "no_data",
+        "broker_rejection": "warning",
+        "no_data": "no_data",
+    }
+
+    for state, expected_status in expected.items():
+        paths = create_monitor_fixture(tmp_path / state, state, symbol="BTC/USD")
+        instance = DashboardInstance(
+            label=state,
+            symbols=("BTC/USD",),
+            asset_classes=("crypto",),
+            decision_log_path=paths["decisions"],
+            fill_log_path=paths["fills"],
+            snapshot_log_path=paths["snapshot"],
+        )
+
+        summary = summarize_instance(instance)
+
+        assert summary.status.state == expected_status
+        assert summary.issues or expected_status == "no_data"
+
+
+def test_dashboard_status_includes_recent_issue_summaries_for_problem_states(tmp_path):
+    problem_states = ("blocked_live", "stale", "failed", "malformed", "broker_rejection")
+    instances = []
+    for state in problem_states:
+        paths = create_monitor_fixture(tmp_path / state, state, symbol="BTC/USD")
+        instances.append(
+            DashboardInstance(
+                label=state,
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+            )
+        )
+
+    payload = dashboard_status(tuple(instances))
+    categories = {issue["category"] for issue in payload["issues"]}
+
+    assert payload["aggregate_state"] == "failed"
+    assert {"blocked", "stale_data", "failed", "malformed_csv", "broker_rejection"} <= categories

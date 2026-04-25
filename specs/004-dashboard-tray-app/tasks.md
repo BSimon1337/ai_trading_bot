@@ -102,17 +102,17 @@
 
 ### Tests for User Story 3
 
-- [ ] T032 [P] [US3] Add fixture-state unit tests for blocked-live, stale, failed, malformed, broker-rejection, and no-data states in `tests/unit/test_monitor_data.py`
-- [ ] T033 [P] [US3] Add dashboard contract tests for recent issues and critical status rendering in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T034 [P] [US3] Add tray status tests for warning and critical issue aggregation in `tests/unit/test_tray_state.py`
+- [x] T032 [P] [US3] Add fixture-state unit tests for blocked-live, stale, failed, malformed, broker-rejection, and no-data states in `tests/unit/test_monitor_data.py`
+- [x] T033 [P] [US3] Add dashboard contract tests for recent issues and critical status rendering in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T034 [P] [US3] Add tray status tests for warning and critical issue aggregation in `tests/unit/test_tray_state.py`
 
 ### Implementation for User Story 3
 
-- [ ] T035 [US3] Implement issue extraction from decision, fill, snapshot, and run-event evidence in `tradingbot/app/monitor.py`
-- [ ] T036 [US3] Implement stale/blocked/failed/no-data status classification rules in `tradingbot/app/monitor.py`
-- [ ] T037 [US3] Add recent issues panel and distinct status styling in `templates/monitor.html`
-- [ ] T038 [US3] Integrate issue severity with tray state and tooltip text in `tradingbot/app/tray.py`
-- [ ] T039 [US3] Validate User Story 3 by running monitor data, dashboard contract, and tray state tests in `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/unit/test_tray_state.py`
+- [x] T035 [US3] Implement issue extraction from decision, fill, snapshot, and run-event evidence in `tradingbot/app/monitor.py`
+- [x] T036 [US3] Implement stale/blocked/failed/no-data status classification rules in `tradingbot/app/monitor.py`
+- [x] T037 [US3] Add recent issues panel and distinct status styling in `templates/monitor.html`
+- [x] T038 [US3] Integrate issue severity with tray state and tooltip text in `tradingbot/app/tray.py`
+- [x] T039 [US3] Validate User Story 3 by running monitor data, dashboard contract, and tray state tests in `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/unit/test_tray_state.py`
 
 **Checkpoint**: Problem states are visible without reading raw logs.
 

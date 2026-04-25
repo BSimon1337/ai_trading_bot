@@ -83,3 +83,39 @@ def test_dashboard_contract_does_not_expose_secret_values(tmp_path, monkeypatch)
     assert "also-do-not-show-this" not in status_text
     assert "do-not-show-this" not in page_text
     assert "also-do-not-show-this" not in page_text
+
+
+def test_dashboard_contract_renders_recent_issues_and_critical_states(tmp_path):
+    blocked_paths = create_monitor_fixture(tmp_path / "blocked", "blocked_live", symbol="BTC/USD")
+    malformed_paths = create_monitor_fixture(tmp_path / "malformed", "malformed", symbol="ETH/USD")
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=blocked_paths["decisions"],
+                fill_log_path=blocked_paths["fills"],
+                snapshot_log_path=blocked_paths["snapshot"],
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=malformed_paths["decisions"],
+                fill_log_path=malformed_paths["fills"],
+                snapshot_log_path=malformed_paths["snapshot"],
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert payload["aggregate_state"] in {"blocked", "failed"}
+    assert any(issue["category"] == "blocked" for issue in payload["issues"])
+    assert any(issue["category"] == "malformed_csv" for issue in payload["issues"])
+    assert "Recent Issues" in page_text
+    assert "blocked" in page_text
+    assert "malformed_csv" in page_text
