@@ -29,11 +29,11 @@
 
 **Critical**: No user story work should start until current-versus-historical evidence handling and shared summary helpers are in place.
 
-- [ ] T004 Implement shared active-evidence window and historical-evidence filtering helpers in `tradingbot/app/monitor.py`
-- [ ] T005 Implement shared account-summary source selection and freshness helpers in `tradingbot/app/monitor.py`
-- [ ] T006 Implement shared value-evidence fallback helpers for per-symbol held-value estimation in `tradingbot/app/monitor.py`
-- [ ] T007 [P] Add fixture builders or fixture coverage for mixed current/historical, archived, malformed, and no-recent-fill scenarios in `tests/unit/test_monitor_data.py`
-- [ ] T008 [P] Add foundational unit tests for active-evidence windowing, authoritative summary selection, and held-value fallback helpers in `tests/unit/test_monitor_data.py`
+- [x] T004 Implement shared active-evidence window and historical-evidence filtering helpers in `tradingbot/app/monitor.py`
+- [x] T005 Implement shared account-summary source selection and freshness helpers in `tradingbot/app/monitor.py`
+- [x] T006 Implement shared value-evidence fallback helpers for per-symbol held-value estimation in `tradingbot/app/monitor.py`
+- [x] T007 [P] Add fixture builders or fixture coverage for mixed current/historical, archived, malformed, and no-recent-fill scenarios in `tests/unit/test_monitor_data.py`
+- [x] T008 [P] Add foundational unit tests for active-evidence windowing, authoritative summary selection, and held-value fallback helpers in `tests/unit/test_monitor_data.py`
 
 **Checkpoint**: Shared monitor evidence logic is ready for story-specific status, UI, and retention refinements.
 

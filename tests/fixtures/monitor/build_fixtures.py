@@ -95,6 +95,35 @@ def broker_rejection(symbol: str = "BTC/USD", **overrides) -> dict[str, object]:
     )
 
 
+def restarted_healthy(symbol: str = "BTC/USD") -> list[dict[str, object]]:
+    old = failed_run_decision(
+        symbol="SYSTEM",
+        timestamp=(datetime.now(timezone.utc) - timedelta(hours=4)).isoformat(),
+    )
+    current = recent_decision(
+        symbol=symbol,
+        mode="live",
+        action="hold",
+        reason="delta_qty_zero",
+        result="skipped",
+    )
+    return [old, current]
+
+
+def no_recent_fill_snapshot(symbol: str = "BTC/USD") -> list[dict[str, object]]:
+    return [
+        {
+            "date": datetime.now(timezone.utc).isoformat(),
+            "mode": "live" if "/" in symbol else "paper",
+            "symbol": symbol,
+            "portfolio_value": "100",
+            "cash": "80",
+            "position_qty": "2",
+            "day_pnl": "0.5",
+        }
+    ]
+
+
 def write_malformed_csv(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('timestamp,symbol,action\n"unterminated,BTC/USD,buy\n', encoding="utf-8")
@@ -112,6 +141,16 @@ def create_monitor_fixture(root: Path, state: str, symbol: str = "SPY") -> dict[
         return paths
     if state == "malformed":
         write_malformed_csv(paths["decisions"])
+        return paths
+    if state == "mixed_current_historical":
+        write_decisions(paths["decisions"], restarted_healthy(symbol=symbol))
+        write_fills(paths["fills"], [])
+        write_snapshots(paths["snapshot"], no_recent_fill_snapshot(symbol=symbol))
+        return paths
+    if state == "no_recent_fill":
+        write_decisions(paths["decisions"], [recent_decision(symbol=symbol, mode="live")])
+        write_fills(paths["fills"], [])
+        write_snapshots(paths["snapshot"], no_recent_fill_snapshot(symbol=symbol))
         return paths
 
     decision_factories = {

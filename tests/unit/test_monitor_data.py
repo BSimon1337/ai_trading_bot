@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -7,7 +8,12 @@ import pandas as pd
 from tests.conftest import make_bot_config
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, recent_decision, write_decisions, write_malformed_csv
 from tradingbot.app.monitor import (
+    VALUE_SOURCE_SNAPSHOT_DELTA,
+    _filter_active_evidence,
+    _select_authoritative_account_instance,
+    _value_evidence,
     DashboardInstance,
+    SnapshotSummary,
     discover_monitor_instances,
     dashboard_status,
     load_monitor_configuration,
@@ -120,11 +126,132 @@ def test_sanitize_symbol_for_path_removes_non_alphanumeric_characters():
 
 
 def test_monitor_fixture_builder_supports_phase_two_states(tmp_path):
-    for state in ("healthy", "no_data", "malformed", "stale", "blocked_live", "failed", "broker_rejection"):
+    for state in (
+        "healthy",
+        "no_data",
+        "malformed",
+        "stale",
+        "blocked_live",
+        "failed",
+        "broker_rejection",
+        "mixed_current_historical",
+        "no_recent_fill",
+    ):
         paths = create_monitor_fixture(tmp_path / state, state, symbol="BTC/USD")
 
         assert set(paths) == {"decisions", "fills", "snapshot"}
         assert paths["decisions"].name == "decisions.csv"
+
+
+def test_filter_active_evidence_keeps_only_rows_inside_active_window():
+    frame = pd.DataFrame(
+        [
+            {"timestamp": "2026-04-25T10:00:00+00:00", "symbol": "BTC/USD"},
+            {"timestamp": "2026-04-25T13:00:00+00:00", "symbol": "BTC/USD"},
+        ]
+    )
+
+    filtered = _filter_active_evidence(
+        frame,
+        reference=datetime(2026, 4, 25, 13, 30, tzinfo=timezone.utc),
+        active_minutes=60,
+    )
+
+    assert list(filtered["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S%z")) == ["2026-04-25T13:00:00+0000"]
+
+
+def test_select_authoritative_account_instance_prefers_freshest_current_snapshot(tmp_path):
+    old_paths = create_monitor_fixture(tmp_path / "old", "healthy", symbol="BTC/USD")
+    fresh_paths = create_monitor_fixture(tmp_path / "fresh", "healthy", symbol="ETH/USD")
+    old_summary = summarize_instance(
+        DashboardInstance(
+            label="BTC/USD",
+            symbols=("BTC/USD",),
+            asset_classes=("crypto",),
+            decision_log_path=old_paths["decisions"],
+            fill_log_path=old_paths["fills"],
+            snapshot_log_path=old_paths["snapshot"],
+        )
+    )
+    fresh_summary = summarize_instance(
+        DashboardInstance(
+            label="ETH/USD",
+            symbols=("ETH/USD",),
+            asset_classes=("crypto",),
+            decision_log_path=fresh_paths["decisions"],
+            fill_log_path=fresh_paths["fills"],
+            snapshot_log_path=fresh_paths["snapshot"],
+        )
+    )
+    old_snapshot = Path(old_paths["snapshot"])
+    old_snapshot.write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                "2026-04-25T09:00:00+00:00,live,BTC/USD,100.0,90.0,0.1,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fresh_snapshot = Path(fresh_paths["snapshot"])
+    fresh_snapshot.write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                "2026-04-25T13:20:00+00:00,live,ETH/USD,101.0,80.0,0.2,1.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    old_summary = summarize_instance(old_summary)
+    fresh_summary = summarize_instance(fresh_summary)
+
+    selected = _select_authoritative_account_instance(
+        [old_summary, fresh_summary],
+        reference=datetime(2026, 4, 25, 13, 30, tzinfo=timezone.utc),
+        stale_after_minutes=180,
+    )
+
+    assert selected is not None
+    assert selected.label == "ETH/USD"
+
+
+def test_value_evidence_falls_back_to_snapshot_delta_when_recent_fill_missing():
+    unit_value, held_value, source = _value_evidence(
+        SnapshotSummary(
+            timestamp="2026-04-25T13:20:00+00:00",
+            mode="live",
+            symbol="BTC/USD",
+            portfolio_value="100.0",
+            cash="80.0",
+            position_qty="2.0",
+            day_pnl="0.5",
+        ),
+        None,
+    )
+
+    assert unit_value == 10.0
+    assert held_value == 20.0
+    assert source == VALUE_SOURCE_SNAPSHOT_DELTA
+
+
+def test_dashboard_status_uses_snapshot_delta_held_value_without_recent_fill(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "no_recent_fill", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["held_value_source"] == VALUE_SOURCE_SNAPSHOT_DELTA
+    assert item["held_value_estimate"] == 20.0
+    assert item["latest_fill_price"] == 10.0
 
 
 def test_dashboard_status_aggregates_at_least_ten_instances(tmp_path):
@@ -266,6 +393,25 @@ def test_dashboard_status_includes_account_overview_from_freshest_instance(tmp_p
             [
                 "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
                 "2026-04-25T17:05:00+00:00,live,ETH/USD,crypto,buy,model,0.70,external,1.0,neutral,0.004,101.5,88.0,submitted,submitted",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    Path(btc_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                "2026-04-25T17:00:00+00:00,live,BTC/USD,100.0,90.0,0.1,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(eth_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                "2026-04-25T17:05:00+00:00,live,ETH/USD,100.0,100.0,0.0,0.0",
             ]
         ),
         encoding="utf-8",

@@ -16,6 +16,9 @@ from tradingbot.config.settings import BotConfig, infer_asset_class
 DEFAULT_REFRESH_SECONDS = 15
 DEFAULT_STALE_AFTER_MINUTES = 180
 SENSITIVE_KEYWORDS = ("key", "secret", "token", "password", "credential")
+VALUE_SOURCE_FILL = "latest_fill"
+VALUE_SOURCE_SNAPSHOT_DELTA = "snapshot_delta"
+VALUE_SOURCE_UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -351,6 +354,35 @@ def _normalize_snapshot_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
     return normalized.sort_values("timestamp")
 
 
+def _active_evidence_cutoff(
+    *,
+    reference: datetime | None = None,
+    active_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> pd.Timestamp:
+    reference_utc = reference or datetime.now(timezone.utc)
+    timestamp = pd.Timestamp(reference_utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return timestamp - pd.Timedelta(minutes=active_minutes)
+
+
+def _filter_active_evidence(
+    dataframe: pd.DataFrame,
+    *,
+    column: str = "timestamp",
+    reference: datetime | None = None,
+    active_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> pd.DataFrame:
+    if dataframe.empty or column not in dataframe.columns:
+        return dataframe
+    cutoff = _active_evidence_cutoff(reference=reference, active_minutes=active_minutes)
+    normalized = dataframe.copy()
+    normalized[column] = pd.to_datetime(normalized[column], errors="coerce", utc=True)
+    return normalized[normalized[column].notna() & (normalized[column] >= cutoff)].sort_values(column)
+
+
 def _latest_timestamp(*frames: pd.DataFrame) -> pd.Timestamp | None:
     timestamps: list[pd.Timestamp] = []
     for frame in frames:
@@ -360,6 +392,66 @@ def _latest_timestamp(*frames: pd.DataFrame) -> pd.Timestamp | None:
         if timestamp is not None and pd.notna(timestamp):
             timestamps.append(timestamp)
     return max(timestamps) if timestamps else None
+
+
+def _parse_instance_timestamp(value: str | None) -> pd.Timestamp | None:
+    if not value:
+        return None
+    timestamp = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(timestamp):
+        return None
+    return timestamp
+
+
+def _select_authoritative_account_instance(
+    instances: list[DashboardInstance],
+    *,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+    reference: datetime | None = None,
+) -> DashboardInstance | None:
+    if not instances:
+        return None
+    cutoff = _active_evidence_cutoff(reference=reference, active_minutes=stale_after_minutes)
+    candidates: list[tuple[pd.Timestamp, DashboardInstance]] = []
+    fallback_candidates: list[tuple[pd.Timestamp, DashboardInstance]] = []
+    for instance in instances:
+        snapshot = instance.latest_snapshot
+        snapshot_ts = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
+        last_update_ts = _parse_instance_timestamp(instance.last_updated_at)
+        if snapshot_ts is not None:
+            fallback_candidates.append((snapshot_ts, instance))
+            if snapshot_ts >= cutoff:
+                candidates.append((snapshot_ts, instance))
+        elif last_update_ts is not None:
+            fallback_candidates.append((last_update_ts, instance))
+            if last_update_ts >= cutoff:
+                candidates.append((last_update_ts, instance))
+    ranked = candidates or fallback_candidates
+    if not ranked:
+        return instances[0]
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked[0][1]
+
+
+def _value_evidence(
+    snapshot: SnapshotSummary | None,
+    fill: FillSummary | None,
+) -> tuple[float, float, str]:
+    position_qty = to_float(snapshot.position_qty if snapshot is not None else None)
+    fill_qty = to_float(fill.quantity if fill is not None else None)
+    fill_notional = to_float(fill.notional_usd if fill is not None else None)
+    if fill_qty > 0 and fill_notional > 0:
+        unit_value = fill_notional / fill_qty
+        return unit_value, position_qty * unit_value, VALUE_SOURCE_FILL
+
+    portfolio_value = to_float(snapshot.portfolio_value if snapshot is not None else None)
+    cash = to_float(snapshot.cash if snapshot is not None else None)
+    if position_qty > 0 and portfolio_value >= cash:
+        held_value = max(portfolio_value - cash, 0.0)
+        if held_value > 0:
+            return held_value / position_qty, held_value, VALUE_SOURCE_SNAPSHOT_DELTA
+
+    return 0.0, 0.0, VALUE_SOURCE_UNAVAILABLE
 
 
 def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
@@ -571,12 +663,7 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
             actions_7d[action] = int(counts.get(action, 0))
     recent_decisions = _recent_rows(decisions)
     recent_fills = _recent_rows(fills)
-    latest_fill_price = 0.0
-    fill_qty = to_float(latest_fill.quantity)
-    fill_notional = to_float(latest_fill.notional_usd)
-    if fill_qty > 0 and fill_notional > 0:
-        latest_fill_price = fill_notional / fill_qty
-    held_value_estimate = to_float(latest_snapshot.position_qty) * latest_fill_price
+    latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
     return {
         "label": instance.label,
         "status": _status_to_dict(instance.status),
@@ -597,6 +684,7 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "day_pnl": to_float(latest_snapshot.day_pnl),
         "position_qty": to_float(latest_snapshot.position_qty),
         "held_value_estimate": held_value_estimate,
+        "held_value_source": held_value_source,
         "latest_fill_price": latest_fill_price,
         "decisions_today": decisions_today,
         "fills_today": fills_today,
@@ -639,15 +727,19 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
             "latest_update_utc": "",
         }
 
-    freshest = max(
-        instances,
-        key=lambda instance: (
-            pd.to_datetime(instance.last_updated_at, errors="coerce", utc=True)
-            if instance.last_updated_at
-            else pd.Timestamp.min.tz_localize("UTC")
-        ),
-    )
+    freshest = _select_authoritative_account_instance(instances)
+    if freshest is None:
+        return {
+            "account_equity": 0.0,
+            "cash": 0.0,
+            "day_pnl": 0.0,
+            "active_instances": len(instances),
+            "fills_today": 0,
+            "source_instance": "",
+            "latest_update_utc": "",
+        }
     snapshot = freshest.latest_snapshot or SnapshotSummary()
+    latest_update = snapshot.timestamp or freshest.last_updated_at or ""
     return {
         "account_equity": to_float(snapshot.portfolio_value),
         "cash": to_float(snapshot.cash),
@@ -655,7 +747,7 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
         "active_instances": len(instances),
         "fills_today": sum(1 for instance in instances if instance.latest_fill is not None),
         "source_instance": freshest.label,
-        "latest_update_utc": freshest.last_updated_at or "",
+        "latest_update_utc": latest_update,
     }
 
 
