@@ -5,6 +5,9 @@ import os
 from typing import Any, List
 
 import pandas as pd
+
+from tradingbot.data.offline_news import load_offline_news_directory
+
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional in bare environments
@@ -27,6 +30,8 @@ class DataHandler:
         api_key: str | None = None,
         api_secret: str | None = None,
         base_url: str | None = None,
+        offline_news_enabled: bool | None = None,
+        offline_news_dir: str | None = None,
     ):
         _load_env_files()
         self.source = source
@@ -35,6 +40,9 @@ class DataHandler:
             "API_SECRET", os.getenv("ALPACA_API_SECRET", "")
         )
         self.base_url = base_url or os.getenv("BASE_URL", "https://paper-api.alpaca.markets")
+        self.offline_news_enabled = _get_bool_env("OFFLINE_NEWS_ENABLED", False) if offline_news_enabled is None else offline_news_enabled
+        self.offline_news_dir = offline_news_dir or os.getenv("OFFLINE_NEWS_DIR", "data/offline_news")
+        self.last_news_source = "external"
         self._stock_client: Any | None = None
         self._crypto_client: Any | None = None
         self._news_client: Any | None = None
@@ -68,6 +76,20 @@ class DataHandler:
     ) -> List[dict]:
         from alpaca.data.requests import NewsRequest
 
+        if self.offline_news_enabled:
+            records = self._get_offline_news_records(symbol=symbol, start=start, end=end, limit=limit)
+            if records:
+                self.last_news_source = "local_fixture"
+                return records
+            self.last_news_source = "neutral_fallback"
+            LOGGER.warning(
+                "Offline news enabled but no fixture records matched %s from %s to %s; using neutral sentiment fallback.",
+                symbol,
+                start,
+                end,
+            )
+            return []
+
         _, _, news_client = self._client_or_raise()
         all_records: List[dict] = []
         page_token = None
@@ -84,6 +106,7 @@ class DataHandler:
             try:
                 response = news_client.get_news(request)
             except Exception as exc:
+                self.last_news_source = "neutral_fallback"
                 LOGGER.warning(
                     "Alpaca news fetch failed for %s from %s to %s; using neutral sentiment fallback. Error: %s",
                     symbol,
@@ -104,7 +127,24 @@ class DataHandler:
             if not page_token:
                 break
 
+        self.last_news_source = "external" if all_records else "neutral_fallback"
         return all_records
+
+    def _get_offline_news_records(self, symbol: str, start: str, end: str, limit: int) -> List[dict]:
+        start_dt = pd.Timestamp(start, tz="UTC").to_pydatetime()
+        end_dt = pd.Timestamp(end, tz="UTC").to_pydatetime()
+        fixture = load_offline_news_directory(self.offline_news_dir)
+        records = fixture.records_for(symbol=symbol, start=start_dt, end=end_dt)
+        return [
+            {
+                "symbol": record.symbol,
+                "published_at": record.published_at.isoformat(),
+                "headline": record.headline,
+                "source": record.source,
+                "sentiment_source": "local_fixture",
+            }
+            for record in records[:limit]
+        ]
 
     def get_bars(
         self,
@@ -212,3 +252,10 @@ class DataHandler:
         if unit_text not in unit_map:
             raise ValueError(f"Unsupported timeframe: {timeframe}")
         return TimeFrame(amount, unit_map[unit_text])
+
+
+def _get_bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}

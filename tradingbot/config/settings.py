@@ -90,6 +90,8 @@ class BotConfig:
     live_trading_enabled: bool
     live_run_confirmation: str
     live_confirmation_token: str
+    offline_news_enabled: bool = False
+    offline_news_dir: str = "data/offline_news"
 
     @property
     def alpaca_creds(self) -> dict[str, object]:
@@ -141,6 +143,8 @@ class BotConfig:
             "max_notional_per_order_usd": self.max_notional_per_order_usd,
             "max_consecutive_losses": self.max_consecutive_losses,
             "max_data_staleness_minutes": self.max_data_staleness_minutes,
+            "offline_news_enabled": self.offline_news_enabled,
+            "offline_news_dir": self.offline_news_dir,
         }
 
 
@@ -197,4 +201,6 @@ def load_config() -> BotConfig:
         live_trading_enabled=live_enabled,
         live_run_confirmation=os.getenv("LIVE_RUN_CONFIRMATION", "").strip(),
         live_confirmation_token=os.getenv("LIVE_CONFIRMATION_TOKEN", "CONFIRM").strip() or "CONFIRM",
+        offline_news_enabled=_get_bool("OFFLINE_NEWS_ENABLED", False),
+        offline_news_dir=os.getenv("OFFLINE_NEWS_DIR", "data/offline_news").strip() or "data/offline_news",
     )
