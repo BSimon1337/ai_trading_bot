@@ -264,6 +264,18 @@
       {% endif %}
     </section>
 
+    <section class="panel">
+      <h2>Account Overview</h2>
+      <div class="cards" style="padding: 12px;">
+        <div class="card"><div class="k">Account Equity</div><div class="v">${{ "%.2f"|format(account_overview.account_equity) }}</div></div>
+        <div class="card"><div class="k">Cash</div><div class="v">${{ "%.2f"|format(account_overview.cash) }}</div></div>
+        <div class="card"><div class="k">Day PnL</div><div class="v {% if account_overview.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(account_overview.day_pnl) }}</div></div>
+        <div class="card"><div class="k">Active Instances</div><div class="v">{{ account_overview.active_instances }}</div></div>
+        <div class="card"><div class="k">Instances With Fills</div><div class="v">{{ account_overview.fills_today }}</div></div>
+        <div class="card"><div class="k">Overview Source</div><div class="v" style="font-size:14px">{{ account_overview.source_instance or "n/a" }}</div></div>
+      </div>
+    </section>
+
     <div class="overview-grid">
       {% for instance in instances %}
       <section class="instance-card">
@@ -273,8 +285,12 @@
         </div>
         <div class="mini-grid">
           <div class="mini">
-            <div class="k">Portfolio</div>
-            <div class="v">${{ "%.2f"|format(instance.portfolio_value) }}</div>
+            <div class="k">Held {{ instance.label }}</div>
+            <div class="v">{{ "%.8f"|format(instance.position_qty) }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Held Value</div>
+            <div class="v">${{ "%.2f"|format(instance.held_value_estimate) }}</div>
           </div>
           <div class="mini">
             <div class="k">Day PnL</div>
@@ -293,6 +309,10 @@
           <div class="mini">
             <div class="k">Fills Today</div>
             <div class="v">{{ instance.fills_today }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Cash</div>
+            <div class="v">${{ "%.2f"|format(instance.cash) }}</div>
           </div>
         </div>
         <p class="muted" style="margin: 12px 0 0 0;">
@@ -320,9 +340,12 @@
     {% for instance in instances %}
     <section class="tab-content {% if loop.first %}active{% endif %}" id="tab-{{ instance.label }}">
       <div class="cards">
-        <div class="card"><div class="k">Portfolio Value</div><div class="v">${{ "%.2f"|format(instance.portfolio_value) }}</div></div>
+        <div class="card"><div class="k">Held {{ instance.label }}</div><div class="v">{{ "%.8f"|format(instance.position_qty) }}</div></div>
+        <div class="card"><div class="k">Held Value</div><div class="v">${{ "%.2f"|format(instance.held_value_estimate) }}</div></div>
+        <div class="card"><div class="k">Last Fill Price</div><div class="v">${{ "%.6f"|format(instance.latest_fill_price) }}</div></div>
+        <div class="card"><div class="k">Cash</div><div class="v">${{ "%.2f"|format(instance.cash) }}</div></div>
+        <div class="card"><div class="k">Account Equity</div><div class="v">${{ "%.2f"|format(instance.account_equity) }}</div></div>
         <div class="card"><div class="k">Day PnL</div><div class="v {% if instance.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(instance.day_pnl) }}</div></div>
-        <div class="card"><div class="k">Position Qty</div><div class="v">{{ "%.4f"|format(instance.position_qty) }}</div></div>
         <div class="card"><div class="k">Latest Action</div><div class="v">{{ instance.latest_action }}</div></div>
         <div class="card"><div class="k">Mode</div><div class="v">{{ instance.latest_mode }}</div></div>
         <div class="card"><div class="k">Asset Class</div><div class="v">{{ instance.latest_asset_class }}</div></div>

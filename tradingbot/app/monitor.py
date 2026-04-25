@@ -542,6 +542,7 @@ def summarize_instance(
 
 def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
     latest_decision = instance.latest_decision or DecisionSummary()
+    latest_fill = instance.latest_fill or FillSummary()
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
     decisions = normalize_timestamps(safe_read_csv(instance.decision_log_path, source="decisions").dataframe)
     fills = normalize_timestamps(safe_read_csv(instance.fill_log_path, source="fills").dataframe)
@@ -570,6 +571,12 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
             actions_7d[action] = int(counts.get(action, 0))
     recent_decisions = _recent_rows(decisions)
     recent_fills = _recent_rows(fills)
+    latest_fill_price = 0.0
+    fill_qty = to_float(latest_fill.quantity)
+    fill_notional = to_float(latest_fill.notional_usd)
+    if fill_qty > 0 and fill_notional > 0:
+        latest_fill_price = fill_notional / fill_qty
+    held_value_estimate = to_float(latest_snapshot.position_qty) * latest_fill_price
     return {
         "label": instance.label,
         "status": _status_to_dict(instance.status),
@@ -584,9 +591,13 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "latest_source": latest_decision.action_source or "n/a",
         "latest_update_utc": instance.last_updated_at,
         "heartbeat_age_minutes": instance.status.age_minutes,
+        "account_equity": to_float(latest_snapshot.portfolio_value),
         "portfolio_value": to_float(latest_snapshot.portfolio_value),
+        "cash": to_float(latest_snapshot.cash),
         "day_pnl": to_float(latest_snapshot.day_pnl),
         "position_qty": to_float(latest_snapshot.position_qty),
+        "held_value_estimate": held_value_estimate,
+        "latest_fill_price": latest_fill_price,
         "decisions_today": decisions_today,
         "fills_today": fills_today,
         "equity_points": equity_points,
@@ -616,6 +627,38 @@ def _aggregate_state(instances: list[DashboardInstance]) -> str:
     return "running"
 
 
+def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any]:
+    if not instances:
+        return {
+            "account_equity": 0.0,
+            "cash": 0.0,
+            "day_pnl": 0.0,
+            "active_instances": 0,
+            "fills_today": 0,
+            "source_instance": "",
+            "latest_update_utc": "",
+        }
+
+    freshest = max(
+        instances,
+        key=lambda instance: (
+            pd.to_datetime(instance.last_updated_at, errors="coerce", utc=True)
+            if instance.last_updated_at
+            else pd.Timestamp.min.tz_localize("UTC")
+        ),
+    )
+    snapshot = freshest.latest_snapshot or SnapshotSummary()
+    return {
+        "account_equity": to_float(snapshot.portfolio_value),
+        "cash": to_float(snapshot.cash),
+        "day_pnl": to_float(snapshot.day_pnl),
+        "active_instances": len(instances),
+        "fills_today": sum(1 for instance in instances if instance.latest_fill is not None),
+        "source_instance": freshest.label,
+        "latest_update_utc": freshest.last_updated_at or "",
+    }
+
+
 def dashboard_status(
     instances: tuple[DashboardInstance, ...] | None = None,
     *,
@@ -629,6 +672,7 @@ def dashboard_status(
     payload = {
         "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "aggregate_state": _aggregate_state(summarized),
+        "account_overview": _build_account_overview(summarized),
         "instances": [_instance_payload(instance) for instance in summarized],
         "issues": [_issue_to_dict(issue) for issue in issues],
         "recent_activity_columns": ["timestamp", "instance_label", "mode", "symbol", "action", "action_source", "quantity", "reason", "result"],

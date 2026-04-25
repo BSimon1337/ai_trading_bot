@@ -247,6 +247,56 @@ def test_dashboard_status_includes_cross_instance_recent_activity(tmp_path):
     assert {"BTC/USD", "ETH/USD"} <= labels
 
 
+def test_dashboard_status_includes_account_overview_from_freshest_instance(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    btc_decisions = Path(btc_paths["decisions"])
+    eth_decisions = Path(eth_paths["decisions"])
+    btc_decisions.write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
+                "2026-04-25T17:00:00+00:00,live,BTC/USD,crypto,hold,model,0.60,external,1.0,neutral,0,100.0,90.0,no_signal,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_decisions.write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
+                "2026-04-25T17:05:00+00:00,live,ETH/USD,crypto,buy,model,0.70,external,1.0,neutral,0.004,101.5,88.0,submitted,submitted",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+            ),
+        )
+    )
+
+    assert payload["account_overview"]["source_instance"] == "ETH/USD"
+    assert payload["account_overview"]["account_equity"] == 100.0
+    assert payload["account_overview"]["cash"] == 100.0
+
+
 def test_monitor_reads_snapshot_rows_with_iso_timestamps(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
     snapshot_path = paths["snapshot"]
@@ -273,3 +323,39 @@ def test_monitor_reads_snapshot_rows_with_iso_timestamps(tmp_path):
 
     assert payload["instances"][0]["portfolio_value"] == 101.5
     assert payload["instances"][0]["day_pnl"] == 1.5
+
+
+def test_monitor_reports_estimated_held_value_from_position_and_fill(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    Path(paths["fills"]).write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result",
+                "2026-04-25T17:10:00+00:00,live,ETH/USD,crypto,buy,0.5,order-1,100.0,80.0,1000.0,submitted",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                "2026-04-25T17:15:00+00:00,live,ETH/USD,102.0,79.0,0.25,2.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["latest_fill_price"] == 2000.0
+    assert item["held_value_estimate"] == 500.0
