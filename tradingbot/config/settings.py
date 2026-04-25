@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from tradingbot.config.crypto_universe import (
+    crypto_universe_symbols,
+    dedupe_symbols,
+    normalize_crypto_symbol,
+)
+
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional in bare environments
@@ -39,16 +45,28 @@ def _get_int(name: str, default: int) -> int:
 
 
 def _get_symbols() -> tuple[str, ...]:
+    symbols: list[str] = []
     raw = os.getenv("SYMBOLS", "").strip()
     if raw:
-        symbols = tuple(symbol.strip().upper() for symbol in raw.split(",") if symbol.strip())
-        if symbols:
-            return symbols
-    return (os.getenv("SYMBOL", "SPY").strip().upper(),)
+        symbols.extend(normalize_crypto_symbol(symbol) for symbol in raw.split(",") if symbol.strip())
+    else:
+        symbols.append(os.getenv("SYMBOL", "SPY").strip().upper())
+
+    crypto_raw = os.getenv("CRYPTO_SYMBOLS", "").strip()
+    if crypto_raw:
+        symbols.extend(
+            normalize_crypto_symbol(symbol)
+            for symbol in crypto_raw.split(",")
+            if symbol.strip()
+        )
+
+    universe = os.getenv("ALPACA_CRYPTO_UNIVERSE", "none").strip()
+    symbols.extend(crypto_universe_symbols(universe))
+    return dedupe_symbols(symbols)
 
 
 def infer_asset_class(symbol: str) -> str:
-    normalized = symbol.upper().replace("-", "/")
+    normalized = normalize_crypto_symbol(symbol)
     if "/" in normalized:
         return "crypto"
     if normalized.endswith("USD") and len(normalized) > 3:

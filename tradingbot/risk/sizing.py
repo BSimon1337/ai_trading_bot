@@ -17,13 +17,16 @@ class RiskManager:
     def __init__(self, limits: RiskLimits):
         self.limits = limits
 
-    def max_position_quantity(self, portfolio_value: float, last_price: float) -> int:
+    def max_position_quantity(self, portfolio_value: float, last_price: float, allow_fractional: bool = False) -> float:
         if portfolio_value <= 0 or last_price <= 0:
             return 0
         max_notional = portfolio_value * self.limits.max_position_pct
         if self.limits.max_notional_per_order_usd > 0:
             max_notional = min(max_notional, self.limits.max_notional_per_order_usd)
-        return max(0, floor(max_notional / last_price))
+        quantity = max_notional / last_price
+        if allow_fractional:
+            return max(0.0, quantity)
+        return max(0, floor(quantity))
 
     def estimate_gross_leverage(
         self,

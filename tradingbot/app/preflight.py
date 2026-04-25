@@ -184,30 +184,42 @@ def _check_trading_access(config: BotConfig) -> ReadinessCheckResult:
 
 
 def _check_market_data_access(config: BotConfig) -> ReadinessCheckResult:
-    symbol = config.symbol
+    failures: list[str] = []
+    checked: list[str] = []
     try:
-        if infer_asset_class(symbol) == "crypto":
-            from alpaca.data.historical import CryptoHistoricalDataClient
-            from alpaca.data.requests import CryptoLatestQuoteRequest
+        from alpaca.data.historical import CryptoHistoricalDataClient, StockHistoricalDataClient
+        from alpaca.data.requests import CryptoLatestQuoteRequest, StockLatestQuoteRequest
 
-            client = CryptoHistoricalDataClient(config.api_key, config.api_secret)
-            client.get_crypto_latest_quote(CryptoLatestQuoteRequest(symbol_or_symbols=symbol))
-        else:
-            from alpaca.data.historical import StockHistoricalDataClient
-            from alpaca.data.requests import StockLatestQuoteRequest
+        crypto_client = CryptoHistoricalDataClient(config.api_key, config.api_secret)
+        stock_client = StockHistoricalDataClient(config.api_key, config.api_secret)
 
-            client = StockHistoricalDataClient(config.api_key, config.api_secret)
-            client.get_stock_latest_quote(StockLatestQuoteRequest(symbol_or_symbols=symbol))
+        for symbol in config.symbols:
+            try:
+                if infer_asset_class(symbol) == "crypto":
+                    crypto_client.get_crypto_latest_quote(CryptoLatestQuoteRequest(symbol_or_symbols=symbol))
+                else:
+                    stock_client.get_stock_latest_quote(StockLatestQuoteRequest(symbol_or_symbols=symbol))
+                checked.append(symbol)
+            except Exception as exc:
+                failures.append(f"{symbol}: {exc}")
     except Exception as exc:
         return ReadinessCheckResult(
             name="alpaca_market_data_access",
             status=ReadinessStatus.WARNING,
-            message=f"Market data probe did not complete for {symbol}: {exc}",
+            message=f"Market data probe setup did not complete: {exc}",
+        )
+    if failures:
+        return ReadinessCheckResult(
+            name="alpaca_market_data_access",
+            status=ReadinessStatus.WARNING,
+            message=f"Market data probe failed for one or more symbols: {'; '.join(failures)}",
+            details={"checked": tuple(checked), "failures": tuple(failures)},
         )
     return ReadinessCheckResult(
         name="alpaca_market_data_access",
         status=ReadinessStatus.PASS,
-        message=f"Market data probe completed for {symbol}.",
+        message=f"Market data probe completed for {len(checked)} symbol(s).",
+        details={"checked": tuple(checked)},
     )
 
 

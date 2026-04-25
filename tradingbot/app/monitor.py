@@ -1,0 +1,556 @@
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+from flask import Flask, jsonify, render_template
+
+from tradingbot.config.settings import BotConfig, infer_asset_class
+
+
+DEFAULT_REFRESH_SECONDS = 15
+DEFAULT_STALE_AFTER_MINUTES = 180
+SENSITIVE_KEYWORDS = ("key", "secret", "token", "password", "credential")
+
+
+@dataclass(frozen=True)
+class RuntimeStatus:
+    state: str
+    severity: str
+    message: str
+    age_minutes: float | None = None
+
+
+@dataclass(frozen=True)
+class DecisionSummary:
+    timestamp: str = ""
+    mode: str = ""
+    symbol: str = ""
+    asset_class: str = ""
+    action: str = ""
+    action_source: str = ""
+    model_prob_up: str = ""
+    sentiment_source: str = ""
+    sentiment_probability: str = ""
+    sentiment_label: str = ""
+    quantity: str = ""
+    portfolio_value: str = ""
+    cash: str = ""
+    reason: str = ""
+    result: str = ""
+
+
+@dataclass(frozen=True)
+class FillSummary:
+    timestamp: str = ""
+    mode: str = ""
+    symbol: str = ""
+    asset_class: str = ""
+    side: str = ""
+    quantity: str = ""
+    order_id: str = ""
+    portfolio_value: str = ""
+    cash: str = ""
+    notional_usd: str = ""
+    result: str = ""
+
+
+@dataclass(frozen=True)
+class SnapshotSummary:
+    date: str = ""
+    mode: str = ""
+    symbol: str = ""
+    portfolio_value: str = ""
+    cash: str = ""
+    position_qty: str = ""
+    day_pnl: str = ""
+
+
+@dataclass(frozen=True)
+class IssueSummary:
+    timestamp: str
+    severity: str
+    symbol: str
+    category: str
+    message: str
+    source: str
+
+
+@dataclass(frozen=True)
+class DashboardInstance:
+    label: str
+    symbols: tuple[str, ...]
+    asset_classes: tuple[str, ...]
+    decision_log_path: Path
+    fill_log_path: Path
+    snapshot_log_path: Path
+    status: RuntimeStatus = field(
+        default_factory=lambda: RuntimeStatus("no_data", "warning", "No runtime evidence found.")
+    )
+    last_updated_at: str | None = None
+    latest_decision: DecisionSummary | None = None
+    latest_fill: FillSummary | None = None
+    latest_snapshot: SnapshotSummary | None = None
+    issues: tuple[IssueSummary, ...] = ()
+
+
+@dataclass(frozen=True)
+class MonitorConfiguration:
+    dashboard_host: str = "127.0.0.1"
+    dashboard_port: int = 8080
+    refresh_seconds: int = DEFAULT_REFRESH_SECONDS
+    tray_enabled: bool = True
+    read_only: bool = True
+    instances: tuple[DashboardInstance, ...] = ()
+
+
+@dataclass(frozen=True)
+class TrayState:
+    label: str = "AI Trading Bot Monitor"
+    state: str = "unavailable"
+    tooltip: str = "Monitor is not running."
+    last_updated_at: str | None = None
+    menu_actions: tuple[str, ...] = ("Open Dashboard", "Refresh Status", "Exit Monitor")
+
+
+@dataclass(frozen=True)
+class CsvReadResult:
+    path: Path
+    dataframe: pd.DataFrame
+    issue: IssueSummary | None = None
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def safe_read_csv(path: Path, source: str = "csv") -> CsvReadResult:
+    path = Path(path)
+    if not path.exists():
+        return CsvReadResult(
+            path=path,
+            dataframe=pd.DataFrame(),
+            issue=IssueSummary(
+                timestamp=_utc_now_iso(),
+                severity="warning",
+                symbol="SYSTEM",
+                category="no_data",
+                message=f"Runtime evidence file does not exist: {path}",
+                source=source,
+            ),
+        )
+    try:
+        return CsvReadResult(path=path, dataframe=pd.read_csv(path))
+    except Exception as exc:
+        return CsvReadResult(
+            path=path,
+            dataframe=pd.DataFrame(),
+            issue=IssueSummary(
+                timestamp=_utc_now_iso(),
+                severity="warning",
+                symbol="SYSTEM",
+                category="malformed_csv",
+                message=f"Could not read runtime evidence file {path}: {exc}",
+                source=source,
+            ),
+        )
+
+
+def normalize_timestamps(dataframe: pd.DataFrame, column: str = "timestamp") -> pd.DataFrame:
+    if dataframe.empty or column not in dataframe.columns:
+        return dataframe
+    normalized = dataframe.copy()
+    normalized[column] = pd.to_datetime(normalized[column], errors="coerce", utc=True)
+    return normalized.sort_values(column)
+
+
+def to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def sanitize_symbol_for_path(symbol: str) -> str:
+    normalized = symbol.strip().lower()
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def _paths_for_symbol(symbol: str, base_dir: Path = Path("logs")) -> tuple[Path, Path, Path]:
+    suffix = "" if symbol.upper() == "SPY" else f"_{sanitize_symbol_for_path(symbol)}"
+    root = base_dir / f"paper_validation{suffix}"
+    return root / "decisions.csv", root / "fills.csv", root / "daily_snapshot.csv"
+
+
+def discover_monitor_instances(
+    config: BotConfig | None = None,
+    symbols: tuple[str, ...] | None = None,
+    base_dir: Path = Path("logs"),
+) -> tuple[DashboardInstance, ...]:
+    if symbols is None and config is not None:
+        symbols = config.symbols
+    if symbols is None:
+        env_symbols = tuple(symbol.strip().upper() for symbol in os.getenv("SYMBOLS", "").split(",") if symbol.strip())
+        symbols = env_symbols or ("SPY", "BTC/USD")
+
+    instances: list[DashboardInstance] = []
+    for index, symbol in enumerate(symbols):
+        if config is not None and len(symbols) == 1 and index == 0:
+            decision_path = Path(config.decision_log_path)
+            fill_path = Path(config.fill_log_path)
+            snapshot_path = Path(config.daily_snapshot_path)
+        else:
+            decision_path, fill_path, snapshot_path = _paths_for_symbol(symbol, base_dir=base_dir)
+        instances.append(
+            DashboardInstance(
+                label=symbol,
+                symbols=(symbol,),
+                asset_classes=(infer_asset_class(symbol),),
+                decision_log_path=decision_path,
+                fill_log_path=fill_path,
+                snapshot_log_path=snapshot_path,
+            )
+        )
+    return tuple(instances)
+
+
+def load_monitor_configuration(
+    config: BotConfig | None = None,
+    *,
+    symbols: tuple[str, ...] | None = None,
+    base_dir: Path = Path("logs"),
+) -> MonitorConfiguration:
+    refresh_seconds = _safe_int(os.getenv("MONITOR_REFRESH_SECONDS"), DEFAULT_REFRESH_SECONDS)
+    dashboard_port = _safe_int(os.getenv("MONITOR_PORT"), 8080)
+    dashboard_host = os.getenv("MONITOR_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    tray_enabled = os.getenv("MONITOR_TRAY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    return MonitorConfiguration(
+        dashboard_host=dashboard_host,
+        dashboard_port=dashboard_port,
+        refresh_seconds=refresh_seconds,
+        tray_enabled=tray_enabled,
+        read_only=True,
+        instances=discover_monitor_instances(config=config, symbols=symbols, base_dir=base_dir),
+    )
+
+
+def redact_sensitive_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            if any(keyword in str(key).lower() for keyword in SENSITIVE_KEYWORDS):
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = redact_sensitive_values(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_values(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_values(item) for item in value)
+    return value
+
+
+def _clean_value(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def _row_to_summary(row: dict[str, Any], summary_type: type[DecisionSummary] | type[FillSummary] | type[SnapshotSummary]):
+    fields = summary_type.__dataclass_fields__.keys()
+    return summary_type(**{field_name: _clean_value(row.get(field_name, "")) for field_name in fields})
+
+
+def _summary_to_dict(summary: Any | None) -> dict[str, Any]:
+    if summary is None:
+        return {}
+    return {field_name: getattr(summary, field_name) for field_name in summary.__dataclass_fields__}
+
+
+def _issue_to_dict(issue: IssueSummary) -> dict[str, str]:
+    return {
+        "timestamp": issue.timestamp,
+        "severity": issue.severity,
+        "symbol": issue.symbol,
+        "category": issue.category,
+        "message": issue.message,
+        "source": issue.source,
+    }
+
+
+def _status_to_dict(status: RuntimeStatus) -> dict[str, Any]:
+    return {
+        "state": status.state,
+        "severity": status.severity,
+        "message": status.message,
+        "age_minutes": status.age_minutes,
+    }
+
+
+def _recent_rows(dataframe: pd.DataFrame, limit: int = 15) -> list[dict[str, Any]]:
+    if dataframe.empty:
+        return []
+    recent = dataframe.tail(limit).copy()
+    for column in recent.columns:
+        if pd.api.types.is_datetime64_any_dtype(recent[column]):
+            recent[column] = recent[column].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    return recent.fillna("").to_dict(orient="records")
+
+
+def _latest_timestamp(*frames: pd.DataFrame) -> pd.Timestamp | None:
+    timestamps: list[pd.Timestamp] = []
+    for frame in frames:
+        if frame.empty or "timestamp" not in frame.columns:
+            continue
+        timestamp = frame["timestamp"].dropna().iloc[-1] if not frame["timestamp"].dropna().empty else None
+        if timestamp is not None and pd.notna(timestamp):
+            timestamps.append(timestamp)
+    return max(timestamps) if timestamps else None
+
+
+def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
+    if timestamp is None or pd.isna(timestamp):
+        return None
+    return float((datetime.now(timezone.utc) - timestamp.to_pydatetime()).total_seconds() / 60.0)
+
+
+def _classify_status(
+    latest_decision: DecisionSummary | None,
+    issues: list[IssueSummary],
+    age_minutes: float | None,
+    stale_after_minutes: int,
+) -> RuntimeStatus:
+    if latest_decision is None:
+        return RuntimeStatus("no_data", "warning", "No runtime evidence found.", age_minutes)
+    if latest_decision.mode == "blocked-live" or latest_decision.result == "blocked":
+        return RuntimeStatus("blocked", "critical", latest_decision.reason or "Live run was blocked.", age_minutes)
+    if latest_decision.result == "failed":
+        return RuntimeStatus("failed", "critical", latest_decision.reason or "Runtime failed.", age_minutes)
+    if any(issue.severity == "critical" for issue in issues):
+        return RuntimeStatus("failed", "critical", "Recent critical issue found.", age_minutes)
+    if age_minutes is not None and age_minutes > stale_after_minutes:
+        return RuntimeStatus("stale", "warning", f"Latest evidence is {age_minutes:.1f} minutes old.", age_minutes)
+    if latest_decision.mode == "active-live" or latest_decision.mode == "live":
+        return RuntimeStatus("live", "ok", "Live runtime evidence is updating.", age_minutes)
+    if latest_decision.mode == "paper":
+        return RuntimeStatus("paper", "info", "Paper runtime evidence is updating.", age_minutes)
+    return RuntimeStatus("running", "ok", "Runtime evidence is updating.", age_minutes)
+
+
+def _issues_from_evidence(
+    read_results: tuple[CsvReadResult, ...],
+    decisions: pd.DataFrame,
+    fills: pd.DataFrame,
+) -> list[IssueSummary]:
+    issues = [result.issue for result in read_results if result.issue is not None]
+    for frame, source in ((decisions, "decisions"), (fills, "fills")):
+        if frame.empty:
+            continue
+        for row in frame.tail(20).to_dict(orient="records"):
+            reason = str(row.get("reason", ""))
+            result = str(row.get("result", ""))
+            if result in {"failed", "blocked", "rejected", "canceled"} or reason.startswith("broker_"):
+                issues.append(
+                    IssueSummary(
+                        timestamp=_clean_value(row.get("timestamp")) or _utc_now_iso(),
+                        severity="critical" if result in {"failed", "blocked"} else "warning",
+                        symbol=_clean_value(row.get("symbol")) or "SYSTEM",
+                        category=result or "broker_issue",
+                        message=reason or result,
+                        source=source,
+                    )
+                )
+    return [issue for issue in issues if issue is not None]
+
+
+def summarize_instance(
+    instance: DashboardInstance,
+    *,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> DashboardInstance:
+    decision_result = safe_read_csv(instance.decision_log_path, source="decisions")
+    fill_result = safe_read_csv(instance.fill_log_path, source="fills")
+    snapshot_result = safe_read_csv(instance.snapshot_log_path, source="snapshot")
+    decisions = normalize_timestamps(decision_result.dataframe)
+    fills = normalize_timestamps(fill_result.dataframe)
+    snapshot = snapshot_result.dataframe.copy()
+
+    latest_decision = (
+        _row_to_summary(decisions.iloc[-1].to_dict(), DecisionSummary) if not decisions.empty else None
+    )
+    latest_fill = _row_to_summary(fills.iloc[-1].to_dict(), FillSummary) if not fills.empty else None
+    latest_snapshot = (
+        _row_to_summary(snapshot.iloc[-1].to_dict(), SnapshotSummary) if not snapshot.empty else None
+    )
+    last_timestamp = _latest_timestamp(decisions, fills)
+    age = _age_minutes(last_timestamp)
+    issues = _issues_from_evidence((decision_result, fill_result, snapshot_result), decisions, fills)
+    status = _classify_status(latest_decision, issues, age, stale_after_minutes)
+    return DashboardInstance(
+        label=instance.label,
+        symbols=instance.symbols,
+        asset_classes=instance.asset_classes,
+        decision_log_path=instance.decision_log_path,
+        fill_log_path=instance.fill_log_path,
+        snapshot_log_path=instance.snapshot_log_path,
+        status=status,
+        last_updated_at=None if last_timestamp is None else last_timestamp.isoformat(),
+        latest_decision=latest_decision,
+        latest_fill=latest_fill,
+        latest_snapshot=latest_snapshot,
+        issues=tuple(issues),
+    )
+
+
+def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
+    latest_decision = instance.latest_decision or DecisionSummary()
+    latest_snapshot = instance.latest_snapshot or SnapshotSummary()
+    decisions = normalize_timestamps(safe_read_csv(instance.decision_log_path, source="decisions").dataframe)
+    fills = normalize_timestamps(safe_read_csv(instance.fill_log_path, source="fills").dataframe)
+    snapshot = safe_read_csv(instance.snapshot_log_path, source="snapshot").dataframe
+    now_utc_date = datetime.now(timezone.utc).date()
+    decisions_today = 0
+    fills_today = 0
+    if not decisions.empty and "timestamp" in decisions.columns:
+        decisions_today = int((decisions["timestamp"].dt.date == now_utc_date).sum())
+    if not fills.empty and "timestamp" in fills.columns:
+        fills_today = int((fills["timestamp"].dt.date == now_utc_date).sum())
+    equity_points: list[float] = []
+    pnl_points: list[float] = []
+    if not snapshot.empty:
+        snapshot = snapshot.copy()
+        snapshot["portfolio_value"] = pd.to_numeric(snapshot.get("portfolio_value"), errors="coerce")
+        snapshot["day_pnl"] = pd.to_numeric(snapshot.get("day_pnl"), errors="coerce")
+        snapshot = snapshot.fillna(0)
+        equity_points = snapshot["portfolio_value"].astype(float).tail(30).tolist()
+        pnl_points = snapshot["day_pnl"].astype(float).tail(30).tolist()
+    actions_7d = {"buy": 0, "sell": 0, "hold": 0, "flat": 0}
+    if not decisions.empty and "timestamp" in decisions.columns and "action" in decisions.columns:
+        recent = decisions[decisions["timestamp"] >= pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=7)]
+        counts = recent["action"].astype(str).value_counts().to_dict()
+        for action in actions_7d:
+            actions_7d[action] = int(counts.get(action, 0))
+    recent_decisions = _recent_rows(decisions)
+    recent_fills = _recent_rows(fills)
+    return {
+        "label": instance.label,
+        "status": _status_to_dict(instance.status),
+        "status_state": instance.status.state,
+        "status_severity": instance.status.severity,
+        "symbols": list(instance.symbols),
+        "asset_classes": list(instance.asset_classes),
+        "latest_action": latest_decision.action or "n/a",
+        "latest_reason": latest_decision.reason or instance.status.message,
+        "latest_mode": latest_decision.mode or "unknown",
+        "latest_asset_class": latest_decision.asset_class or (instance.asset_classes[0] if instance.asset_classes else "unknown"),
+        "latest_source": latest_decision.action_source or "n/a",
+        "latest_update_utc": instance.last_updated_at,
+        "heartbeat_age_minutes": instance.status.age_minutes,
+        "portfolio_value": to_float(latest_snapshot.portfolio_value),
+        "day_pnl": to_float(latest_snapshot.day_pnl),
+        "position_qty": to_float(latest_snapshot.position_qty),
+        "decisions_today": decisions_today,
+        "fills_today": fills_today,
+        "equity_points": equity_points,
+        "pnl_points": pnl_points,
+        "actions_7d": actions_7d,
+        "recent_decisions": recent_decisions,
+        "recent_fills": recent_fills,
+        "recent_decisions_columns": list(decisions.columns) if not decisions.empty else list(DecisionSummary.__dataclass_fields__.keys()),
+        "recent_decisions_rows": recent_decisions,
+        "recent_fills_columns": list(fills.columns) if not fills.empty else list(FillSummary.__dataclass_fields__.keys()),
+        "recent_fills_rows": recent_fills,
+        "issues": [_issue_to_dict(issue) for issue in instance.issues],
+    }
+
+
+def _aggregate_state(instances: list[DashboardInstance]) -> str:
+    states = {instance.status.state for instance in instances}
+    if not instances:
+        return "no_data"
+    for state in ("failed", "blocked", "stale", "no_data"):
+        if state in states:
+            return state
+    if "live" in states:
+        return "live"
+    if "paper" in states:
+        return "paper"
+    return "running"
+
+
+def dashboard_status(
+    instances: tuple[DashboardInstance, ...] | None = None,
+    *,
+    config: BotConfig | None = None,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> dict[str, Any]:
+    configured = instances if instances is not None else load_monitor_configuration(config=config).instances
+    summarized = [summarize_instance(instance, stale_after_minutes=stale_after_minutes) for instance in configured]
+    issues = [issue for instance in summarized for issue in instance.issues]
+    payload = {
+        "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "aggregate_state": _aggregate_state(summarized),
+        "instances": [_instance_payload(instance) for instance in summarized],
+        "issues": [_issue_to_dict(issue) for issue in issues],
+    }
+    return redact_sensitive_values(payload)
+
+
+def create_app(
+    *,
+    instances: tuple[DashboardInstance, ...] | None = None,
+    config: BotConfig | None = None,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> Flask:
+    app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[2] / "templates"))
+
+    def status_payload() -> dict[str, Any]:
+        return dashboard_status(instances, config=config, stale_after_minutes=stale_after_minutes)
+
+    @app.route("/")
+    def dashboard():
+        payload = status_payload()
+        return render_template("monitor.html", **payload, refresh_seconds=DEFAULT_REFRESH_SECONDS)
+
+    @app.route("/health")
+    def health():
+        payload = status_payload()
+        return jsonify(
+            {
+                "ok": True,
+                "time_utc": datetime.now(timezone.utc).isoformat(),
+                "monitor_state": payload["aggregate_state"],
+                "instances_count": len(payload["instances"]),
+            }
+        )
+
+    @app.route("/api/status")
+    def api_status():
+        return jsonify(status_payload())
+
+    return app

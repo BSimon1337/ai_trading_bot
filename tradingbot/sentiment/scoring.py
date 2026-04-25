@@ -1,3 +1,4 @@
+import logging
 from typing import List
 
 _torch = None
@@ -7,6 +8,7 @@ _device = None
 
 
 labels = ["positive", "negative", "neutral"]
+LOGGER = logging.getLogger(__name__)
 
 
 def _load_finbert():
@@ -21,16 +23,25 @@ def _load_finbert():
     _device = "cuda:0" if torch.cuda.is_available() else "cpu"
     _tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
     _model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert").to(_device)
+    _model.eval()
     return _torch, _tokenizer, _model, _device
 
 def estimate_sentiment(news):
     if news:
-        torch, tokenizer, model, device = _load_finbert()
+        try:
+            torch, tokenizer, model, device = _load_finbert()
+        except (ImportError, ModuleNotFoundError) as exc:
+            LOGGER.warning("FinBERT dependencies unavailable; using neutral sentiment fallback. Error: %s", exc)
+            return 0, labels[-1]
+        except Exception as exc:
+            LOGGER.warning("FinBERT sentiment load failed; using neutral sentiment fallback. Error: %s", exc)
+            return 0, labels[-1]
         # Tokenize input and move tokens to the correct device
         tokens = tokenizer(news, return_tensors="pt", padding=True).to(device)
 
-        # Perform inference on the model, which is on the GPU
-        result = model(tokens["input_ids"], attention_mask=tokens["attention_mask"])["logits"]
+        # Perform inference without gradient tracking to keep live GPU memory stable.
+        with torch.no_grad():
+            result = model(tokens["input_ids"], attention_mask=tokens["attention_mask"])["logits"]
 
         # Move the result to CPU for further processing, if needed
         result = torch.nn.functional.softmax(torch.sum(result, 0), dim=-1)

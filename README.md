@@ -48,6 +48,8 @@ Set runtime configuration through environment variables or local `.env` files. C
 - `API_SECRET`
 - `BASE_URL`
 - `SYMBOLS`
+- `CRYPTO_SYMBOLS`
+- `ALPACA_CRYPTO_UNIVERSE`
 - `PAPER_TRADING`
 - `LIVE_TRADING_ENABLED`
 - `LIVE_RUN_CONFIRMATION`
@@ -56,6 +58,27 @@ Set runtime configuration through environment variables or local `.env` files. C
 - `BACKTEST_END`
 
 Live trading requires both the persistent live enable flag and the per-run confirmation token. If either is missing, the runtime blocks live execution.
+
+Crypto symbols can be configured explicitly with Alpaca slash symbols:
+
+```powershell
+$env:SYMBOLS="F"
+$env:CRYPTO_SYMBOLS="BTC/USD,ETH/USD,SOL/USD"
+```
+
+For a broader Alpaca crypto allow-list, set:
+
+```powershell
+$env:ALPACA_CRYPTO_UNIVERSE="usd"
+```
+
+Supported values are:
+
+- `none`: do not add a built-in crypto universe
+- `usd`: add Alpaca-supported USD-quoted crypto pairs such as `BTC/USD`, `ETH/USD`, `SOL/USD`, `DOGE/USD`, and other active USD pairs
+- `all`: add all tracked Alpaca crypto pairs, including `USDC`, `USDT`, and `BTC` quote pairs
+
+For live trading, keep the active list intentionally small. Lumibot live execution should be run one symbol per process, so use explicit `CRYPTO_SYMBOLS` for the pairs you actually want active.
 
 ## Commands
 

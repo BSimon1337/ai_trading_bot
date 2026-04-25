@@ -3,11 +3,13 @@ from __future__ import annotations
 import csv
 import logging
 from datetime import date
+from decimal import Decimal
 from math import floor
 from pathlib import Path
 
 import joblib
 import pandas as pd
+from lumibot.entities import Asset
 from lumibot.strategies.strategy import Strategy
 from pandas import Timedelta
 
@@ -109,6 +111,36 @@ class SentimentMLStrategy(Strategy):
             return True
         return normalized.endswith("USD") and len(normalized) > 3
 
+    @staticmethod
+    def _split_crypto_symbol(symbol: str) -> tuple[str, str]:
+        normalized = str(symbol).upper().replace("-", "/")
+        if "/" in normalized:
+            base, quote = normalized.split("/", 1)
+            return base, quote
+        if normalized.endswith("USD") and len(normalized) > 3:
+            return normalized[:-3], "USD"
+        return normalized, "USD"
+
+    def _trade_asset(self):
+        if not self.is_crypto:
+            return self.symbol
+        base, _ = self._split_crypto_symbol(self.symbol)
+        return Asset(symbol=base, asset_type=Asset.AssetType.CRYPTO)
+
+    def _trade_quote_asset(self):
+        if not self.is_crypto:
+            return None
+        _, quote = self._split_crypto_symbol(self.symbol)
+        asset_type = Asset.AssetType.FOREX if quote == "USD" else Asset.AssetType.CRYPTO
+        return Asset(symbol=quote, asset_type=asset_type)
+
+    @staticmethod
+    def _format_order_quantity(quantity: float, allow_fractional: bool):
+        if allow_fractional:
+            normalized = f"{max(0.0, float(quantity)):.8f}".rstrip("0").rstrip(".")
+            return Decimal(normalized)
+        return int(quantity)
+
     def _ensure_csv_file(self, path: Path, headers: list[str]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
@@ -166,8 +198,9 @@ class SentimentMLStrategy(Strategy):
             writer.writerow(row)
 
     def _current_position_qty(self) -> float:
+        trade_asset = self._trade_asset()
         try:
-            position = self.get_position(self.symbol)
+            position = self.get_position(trade_asset)
             if position is not None and hasattr(position, "quantity"):
                 return float(position.quantity)
         except Exception:
@@ -176,7 +209,10 @@ class SentimentMLStrategy(Strategy):
         try:
             for position in self.get_positions():
                 asset_symbol = getattr(position, "symbol", None)
-                if asset_symbol == self.symbol and hasattr(position, "quantity"):
+                asset = getattr(position, "asset", None)
+                if asset is not None:
+                    asset_symbol = getattr(asset, "symbol", asset_symbol)
+                if asset_symbol in {self.symbol, getattr(trade_asset, "symbol", self.symbol)} and hasattr(position, "quantity"):
                     return float(position.quantity)
         except Exception:
             pass
@@ -363,7 +399,9 @@ class SentimentMLStrategy(Strategy):
         return last_price * (1.0 - slippage)
 
     def _submit_sized_order(self, side: str) -> dict:
-        last_price = self.get_last_price(self.symbol)
+        trade_asset = self._trade_asset()
+        quote_asset = self._trade_quote_asset()
+        last_price = self.get_last_price(trade_asset, quote=quote_asset) if self.is_crypto else self.get_last_price(trade_asset)
         if not last_price or last_price <= 0:
             return {"executed": False, "reason": "invalid_last_price", "quantity": 0, "order_id": ""}
 
@@ -371,15 +409,21 @@ class SentimentMLStrategy(Strategy):
         portfolio_value = self._get_portfolio_value()
         cash = float(self.get_cash())
 
-        max_position_qty = self.risk_manager.max_position_quantity(portfolio_value, last_price)
+        max_position_qty = self.risk_manager.max_position_quantity(
+            portfolio_value,
+            last_price,
+            allow_fractional=self.is_crypto,
+        )
         if max_position_qty <= 0:
             return {"executed": False, "reason": "max_position_zero", "quantity": 0, "order_id": ""}
 
         if side == "buy":
             effective_price = self._effective_price(side, last_price)
-            budget_qty = floor((cash * self.cash_at_risk) / max(effective_price, 0.01))
+            raw_budget_qty = (cash * self.cash_at_risk) / max(effective_price, 0.01)
+            budget_qty = raw_budget_qty if self.is_crypto else floor(raw_budget_qty)
             target_qty = max(0, min(max_position_qty, budget_qty))
-            delta_qty = max(0, target_qty - floor(current_qty))
+            current_anchor = current_qty if self.is_crypto else floor(current_qty)
+            delta_qty = max(0, target_qty - current_anchor)
             order_side = "buy"
         else:
             if not self.risk_manager.limits.allow_short:
@@ -390,11 +434,12 @@ class SentimentMLStrategy(Strategy):
                         "quantity": 0,
                         "order_id": "",
                     }
-                delta_qty = floor(current_qty)
+                delta_qty = current_qty if self.is_crypto else floor(current_qty)
                 order_side = "sell"
             else:
                 target_qty = -max_position_qty
-                delta_qty = max(0, floor(current_qty - target_qty))
+                raw_delta_qty = current_qty - target_qty
+                delta_qty = max(0, raw_delta_qty if self.is_crypto else floor(raw_delta_qty))
                 order_side = "sell"
 
         if delta_qty <= 0:
@@ -402,7 +447,8 @@ class SentimentMLStrategy(Strategy):
 
         order_notional = abs(float(delta_qty) * float(last_price))
         if order_notional > float(self.max_notional_per_order_usd):
-            capped_qty = floor(float(self.max_notional_per_order_usd) / max(float(last_price), 0.01))
+            raw_capped_qty = float(self.max_notional_per_order_usd) / max(float(last_price), 0.01)
+            capped_qty = raw_capped_qty if self.is_crypto else floor(raw_capped_qty)
             if capped_qty <= 0:
                 return {"executed": False, "reason": "max_notional_blocked", "quantity": 0, "order_id": ""}
             delta_qty = min(delta_qty, capped_qty)
@@ -417,9 +463,18 @@ class SentimentMLStrategy(Strategy):
         if projected_leverage > self.risk_manager.limits.max_gross_leverage:
             return {"executed": False, "reason": "gross_leverage_blocked", "quantity": 0, "order_id": ""}
 
-        order = self.create_order(self.symbol, int(delta_qty), order_side, type="market")
+        order_quantity = self._format_order_quantity(delta_qty, allow_fractional=self.is_crypto)
+        order = self.create_order(trade_asset, order_quantity, order_side, quote=quote_asset, order_type="market")
         submission = self.submit_order(order)
         order_id = getattr(submission, "identifier", "") or getattr(order, "identifier", "")
+        order_status = str(getattr(submission, "status", getattr(order, "status", ""))).lower()
+        if any(status in order_status for status in {"error", "reject", "cancel"}):
+            return {
+                "executed": False,
+                "reason": f"broker_{order_status or 'order_not_submitted'}",
+                "quantity": float(delta_qty),
+                "order_id": order_id,
+            }
         self._trades_today += 1
         self._pending_trade_equity_anchor = portfolio_value
         self._append_csv(
@@ -430,7 +485,7 @@ class SentimentMLStrategy(Strategy):
                 "symbol": self.symbol,
                 "asset_class": self.asset_class,
                 "side": order_side,
-                "quantity": int(delta_qty),
+                "quantity": order_quantity,
                 "order_id": order_id,
                 "portfolio_value": round(portfolio_value, 6),
                 "cash": round(float(self.get_cash()), 6),
@@ -438,7 +493,7 @@ class SentimentMLStrategy(Strategy):
                 "result": "submitted",
             },
         )
-        return {"executed": True, "reason": "submitted", "quantity": int(delta_qty), "order_id": order_id}
+        return {"executed": True, "reason": "submitted", "quantity": float(delta_qty), "order_id": order_id}
 
     def _set_cooldown_if_recent_trade_lost(self) -> None:
         if self._pending_trade_equity_anchor is None:

@@ -1,0 +1,117 @@
+2026-04-16 19:34:19,295 | INFO | LumiBot v4.4.61 starting
+2026-04-16 19:34:23,523 | INFO | .env file loaded from: C:\Users\Beau\ai_trading_bot\env\.env
+2026-04-16 19:34:24,424 | INFO | [unknown] Waiting for the socket stream connection to be established,
+                method _stream_established must be called
+2026-04-16 19:34:25,158 | INFO | [sentiment_ml_btc_usd] Strategy sentiment_ml_btc_usd is initializing
+2026-04-16 19:34:26,106 | INFO | [sentiment_ml_btc_usd] Strategy will check in again at: 2026-04-16 07:35:00 PM CDT
+2026-04-16 19:34:26,107 | WARNING | lumibot_logger.py:warning:613 | [sentiment_ml_btc_usd] LUMIWEALTH_API_KEY not set. Not sending an update to the cloud because lumiwealth_api_key is not set. If you would like to be able to track your bot performance on www.botspot.trade, please set the lumiwealth_api_key parameter in the strategy initialization or the LUMIWEALTH_API_KEY environment variable.
+2026-04-16 19:34:26,538 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776386066.5376656,"v":1}
+2026-04-16 19:35:00,197 | WARNING | alpaca.py:_parse_broker_order:612 | Skipping order bc7bd8c8-7269-4e9f-97db-1872c5b62a17 - quantity is None (invalid order data from Alpaca). Order details: symbol=BTC, side=buy, status=filled, order_type=market, raw_data={}
+2026-04-16 19:35:00,198 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-16 07:35:00 PM LMT
+2026-04-16 19:35:11,153 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-16 07:35:11 PM LMT, next check in time is 2026-04-16 07:36:00 PM CDT. Took 11.14s
+2026-04-16 19:39:26,541 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776386366.5407455,"v":1}
+2026-04-16 19:44:26,547 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776386666.5463223,"v":1}
+2026-04-16 19:49:26,562 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776386966.5614629,"v":1}
+2026-04-16 19:50:00,174 | WARNING | alpaca.py:_parse_broker_order:612 | Skipping order bc7bd8c8-7269-4e9f-97db-1872c5b62a17 - quantity is None (invalid order data from Alpaca). Order details: symbol=BTC, side=buy, status=filled, order_type=market, raw_data={}
+2026-04-16 19:50:00,177 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-16 07:50:00 PM LMT
+2026-04-16 19:50:02,192 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-16 07:50:02 PM LMT, next check in time is 2026-04-16 07:51:00 PM CDT. Took 2.19s
+2026-04-16 19:54:26,578 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776387266.5777984,"v":1}
+2026-04-16 19:59:26,584 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776387566.583831,"v":1}
+2026-04-16 20:04:26,588 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776387866.5874326,"v":1}
+2026-04-16 20:05:00,194 | WARNING | alpaca.py:_parse_broker_order:612 | Skipping order bc7bd8c8-7269-4e9f-97db-1872c5b62a17 - quantity is None (invalid order data from Alpaca). Order details: symbol=BTC, side=buy, status=filled, order_type=market, raw_data={}
+2026-04-16 20:05:00,195 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-16 08:05:00 PM LMT
+2026-04-16 20:05:02,047 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-16 08:05:02 PM LMT, next check in time is 2026-04-16 08:06:00 PM CDT. Took 2.03s
+2026-04-16 20:09:26,602 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776388166.6018803,"v":1}
+2026-04-16 20:14:26,617 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776388466.6168704,"v":1}
+2026-04-16 20:19:26,626 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776388766.6253178,"v":1}
+2026-04-16 20:20:00,196 | WARNING | alpaca.py:_parse_broker_order:612 | Skipping order bc7bd8c8-7269-4e9f-97db-1872c5b62a17 - quantity is None (invalid order data from Alpaca). Order details: symbol=BTC, side=buy, status=filled, order_type=market, raw_data={}
+2026-04-16 20:20:00,197 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-16 08:20:00 PM LMT
+2026-04-16 20:20:02,181 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-16 08:20:02 PM LMT, next check in time is 2026-04-16 08:21:00 PM CDT. Took 2.17s
+2026-04-16 20:24:26,632 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776389066.6313646,"v":1}
+2026-04-16 20:29:26,638 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776389366.6377242,"v":1}
+2026-04-16 20:34:26,644 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776389666.64395,"v":1}
+2026-04-16 20:35:00,169 | WARNING | alpaca.py:_parse_broker_order:612 | Skipping order bc7bd8c8-7269-4e9f-97db-1872c5b62a17 - quantity is None (invalid order data from Alpaca). Order details: symbol=BTC, side=buy, status=filled, order_type=market, raw_data={}
+2026-04-16 20:35:00,170 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-16 08:35:00 PM LMT
+2026-04-16 20:35:02,259 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-16 08:35:02 PM LMT, next check in time is 2026-04-16 08:36:00 PM CDT. Took 2.25s
+2026-04-16 20:39:26,663 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776389966.6612773,"v":1}
+2026-04-16 20:44:26,674 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776390266.6737788,"v":1}
+2026-04-16 20:49:26,686 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776390566.6857138,"v":1}
+2026-04-16 20:50:00,220 | WARNING | alpaca.py:_parse_broker_order:612 | Skipping order bc7bd8c8-7269-4e9f-97db-1872c5b62a17 - quantity is None (invalid order data from Alpaca). Order details: symbol=BTC, side=buy, status=filled, order_type=market, raw_data={}
+2026-04-16 20:50:00,222 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-16 08:50:00 PM LMT
+2026-04-16 20:50:03,312 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-16 08:50:03 PM LMT, next check in time is 2026-04-16 08:51:00 PM CDT. Took 3.31s
+2026-04-16 20:54:26,703 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776390866.7024307,"v":1}
+2026-04-16 20:59:26,707 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776391166.7063909,"v":1}
+2026-04-16 21:04:26,724 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776391466.7232153,"v":1}
+2026-04-16 21:05:00,169 | WARNING | alpaca.py:_parse_broker_order:612 | Skipping order bc7bd8c8-7269-4e9f-97db-1872c5b62a17 - quantity is None (invalid order data from Alpaca). Order details: symbol=BTC, side=buy, status=filled, order_type=market, raw_data={}
+2026-04-16 21:05:00,170 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-16 09:05:00 PM LMT
+2026-04-16 21:05:02,201 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-16 09:05:02 PM LMT, next check in time is 2026-04-16 09:06:00 PM CDT. Took 2.20s
+2026-04-16 21:09:26,731 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776391766.7314441,"v":1}
+2026-04-16 21:14:26,746 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776392066.7455852,"v":1}
+2026-04-16 21:15:19,240 | INFO | [sentiment_ml_btc_usd] Error getting broker balances: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+Traceback (most recent call last):
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\Beau\AppData\Local\Programs\Python\Python310\lib\http\client.py", line 1374, in getresponse
+    response.begin()
+  File "C:\Users\Beau\AppData\Local\Programs\Python\Python310\lib\http\client.py", line 318, in begin
+    version, status, reason = self._read_status()
+  File "C:\Users\Beau\AppData\Local\Programs\Python\Python310\lib\http\client.py", line 287, in _read_status
+    raise RemoteDisconnected("Remote end closed connection without"
+http.client.RemoteDisconnected: Remote end closed connection without response
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\requests\adapters.py", line 645, in send
+    resp = conn.urlopen(
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\util\retry.py", line 490, in increment
+    raise reraise(type(error), error, _stacktrace)
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\util\util.py", line 38, in reraise
+    raise value.with_traceback(tb)
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\urllib3\connection.py", line 571, in getresponse
+    httplib_response = super().getresponse()
+  File "C:\Users\Beau\AppData\Local\Programs\Python\Python310\lib\http\client.py", line 1374, in getresponse
+    response.begin()
+  File "C:\Users\Beau\AppData\Local\Programs\Python\Python310\lib\http\client.py", line 318, in begin
+    version, status, reason = self._read_status()
+  File "C:\Users\Beau\AppData\Local\Programs\Python\Python310\lib\http\client.py", line 287, in _read_status
+    raise RemoteDisconnected("Remote end closed connection without"
+urllib3.exceptions.ProtocolError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\lumibot\strategies\_strategy.py", line 1039, in update_broker_balances
+    broker_balances = self.broker._get_balances_at_broker(self._quote_asset, self)
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\lumibot\brokers\alpaca.py", line 409, in _get_balances_at_broker
+    response = self.api.get_account()
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\alpaca\trading\client.py", line 474, in get_account
+    response = self.get("/account")
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\alpaca\common\rest.py", line 225, in get
+    return self._request("GET", path, data, **kwargs)
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\alpaca\common\rest.py", line 131, in _request
+    return self._one_request(method, url, opts, retry)
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\alpaca\common\rest.py", line 195, in _one_request
+    response = self._session.request(method, url, **opts)
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\requests\sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\requests\sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "C:\Users\Beau\ai_trading_bot\.venv\lib\site-packages\requests\adapters.py", line 660, in send
+    raise ConnectionError(err, request=request)
+requests.exceptions.ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+2026-04-16 21:19:26,754 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776392366.7539606,"v":1}
+2026-04-16 21:20:00,177 | WARNING | alpaca.py:_parse_broker_order:612 | Skipping order bc7bd8c8-7269-4e9f-97db-1872c5b62a17 - quantity is None (invalid order data from Alpaca). Order details: symbol=BTC, side=buy, status=filled, order_type=market, raw_data={}
+2026-04-16 21:20:00,177 | INFO | [sentiment_ml_btc_usd] Bot is running. Executing the on_trading_iteration lifecycle method at 2026-04-16 09:20:00 PM LMT
+2026-04-16 21:20:02,184 | INFO | [sentiment_ml_btc_usd] Trading iteration ended at 2026-04-16 09:20:02 PM LMT, next check in time is 2026-04-16 09:21:00 PM CDT. Took 2.17s
+2026-04-16 21:24:26,763 | INFO | [sentiment_ml_btc_usd] LUMIBOT_TELEMETRY {"broker":"alpaca","broker_snapshot":{"orders_canceled":0,"orders_error":0,"orders_filled":0,"orders_new":0,"orders_partial":0,"orders_placeholder":0,"orders_unprocessed":0,"positions_tracked":2,"trade_events_rows":0},"strategy_name":"sentiment_ml_btc_usd","ts":1776392666.7626777,"v":1}
