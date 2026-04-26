@@ -72,17 +72,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T018 [P] [US2] Add unit tests for bounded headline-preview extraction in `tests/unit/test_monitor_data.py`
-- [ ] T019 [P] [US2] Add unit tests for recent sentiment trend assembly in `tests/unit/test_monitor_data.py`
-- [ ] T020 [P] [US2] Add contract tests for `headline_count`, `headline_preview`, and `sentiment_trend` fields in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T018 [P] [US2] Add unit tests for bounded headline-preview extraction in `tests/unit/test_monitor_data.py`
+- [x] T019 [P] [US2] Add unit tests for recent sentiment trend assembly in `tests/unit/test_monitor_data.py`
+- [x] T020 [P] [US2] Add contract tests for `headline_count`, `headline_preview`, and `sentiment_trend` fields in `tests/contract/test_dashboard_monitor_contract.py`
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] Extend news evidence capture to retain bounded recent headline context in `tradingbot/data/news.py`
-- [ ] T022 [US2] Persist or assemble recent sentiment trend evidence in `tradingbot/strategy/lumibot_strategy.py`
-- [ ] T023 [US2] Add headline-preview and sentiment-trend aggregation in `tradingbot/app/monitor.py`
-- [ ] T024 [US2] Update sentiment detail rendering and bounded headline sections in `templates/monitor.html`
-- [ ] T025 [US2] Validate User Story 2 by running `tests/unit/test_monitor_data.py` and `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T021 [US2] Extend news evidence capture to retain bounded recent headline context in `tradingbot/data/news.py`
+- [x] T022 [US2] Persist or assemble recent sentiment trend evidence in `tradingbot/strategy/lumibot_strategy.py`
+- [x] T023 [US2] Add headline-preview and sentiment-trend aggregation in `tradingbot/app/monitor.py`
+- [x] T024 [US2] Update sentiment detail rendering and bounded headline sections in `templates/monitor.html`
+- [x] T025 [US2] Validate User Story 2 by running `tests/unit/test_monitor_data.py` and `tests/contract/test_dashboard_monitor_contract.py`
 
 **Checkpoint**: Operators can see the news context and recent sentiment direction behind each symbol’s state.
 
@@ -96,17 +96,17 @@
 
 ### Tests for User Story 3
 
-- [ ] T026 [P] [US3] Add unit tests for stale-sentiment visibility and no-headline state handling in `tests/unit/test_monitor_data.py`
-- [ ] T027 [P] [US3] Add contract tests for sentiment availability and stale-state rendering in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T028 [P] [US3] Add smoke coverage for monitor startup with mixed sentiment and fallback evidence in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T026 [P] [US3] Add unit tests for stale-sentiment visibility and no-headline state handling in `tests/unit/test_monitor_data.py`
+- [x] T027 [P] [US3] Add contract tests for sentiment availability and stale-state rendering in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T028 [P] [US3] Add smoke coverage for monitor startup with mixed sentiment and fallback evidence in `tests/smoke/test_monitor_entrypoint.py`
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Implement stale-sentiment classification and bounded fallback messaging in `tradingbot/app/monitor.py`
-- [ ] T030 [US3] Update dashboard wording and sentiment visual cues for stale or unavailable evidence in `templates/monitor.html`
-- [ ] T031 [US3] Confirm tray and monitor remain read-only with sentiment additions in `tradingbot/app/tray.py`
-- [ ] T032 [US3] Document sentiment observability operating guidance and manual validation in `specs/007-sentiment-observability/quickstart.md`
-- [ ] T033 [US3] Validate User Story 3 by running `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/smoke/test_monitor_entrypoint.py`
+- [x] T029 [US3] Implement stale-sentiment classification and bounded fallback messaging in `tradingbot/app/monitor.py`
+- [x] T030 [US3] Update dashboard wording and sentiment visual cues for stale or unavailable evidence in `templates/monitor.html`
+- [x] T031 [US3] Confirm tray and monitor remain read-only with sentiment additions in `tradingbot/app/tray.py`
+- [x] T032 [US3] Document sentiment observability operating guidance and manual validation in `specs/007-sentiment-observability/quickstart.md`
+- [x] T033 [US3] Validate User Story 3 by running `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/smoke/test_monitor_entrypoint.py`
 
 **Checkpoint**: Sentiment visibility remains explainable, bounded, and safe during live monitoring.
 
@@ -116,11 +116,11 @@
 
 **Purpose**: Final consistency, operator documentation, and cross-feature validation.
 
-- [ ] T034 [P] Review sentiment field naming for consistency across `tradingbot/app/monitor.py`, `tradingbot/strategy/lumibot_strategy.py`, and `templates/monitor.html`
-- [ ] T035 [P] Update operator-facing dashboard notes for sentiment interpretation and fallback behavior in `README.md`
-- [ ] T036 [P] Confirm no new dependency or control-plane behavior was introduced in `specs/007-sentiment-observability/research.md` and `tradingbot/app/tray.py`
-- [ ] T037 Run full sentiment-monitor validation from `specs/007-sentiment-observability/quickstart.md`
-- [ ] T038 Record manual validation notes for FinBERT, fallback, and headline-preview scenarios in `specs/007-sentiment-observability/quickstart.md`
+- [x] T034 [P] Review sentiment field naming for consistency across `tradingbot/app/monitor.py`, `tradingbot/strategy/lumibot_strategy.py`, and `templates/monitor.html`
+- [x] T035 [P] Update operator-facing dashboard notes for sentiment interpretation and fallback behavior in `README.md`
+- [x] T036 [P] Confirm no new dependency or control-plane behavior was introduced in `specs/007-sentiment-observability/research.md` and `tradingbot/app/tray.py`
+- [x] T037 Run full sentiment-monitor validation from `specs/007-sentiment-observability/quickstart.md`
+- [x] T038 Record manual validation notes for FinBERT, fallback, and headline-preview scenarios in `specs/007-sentiment-observability/quickstart.md`
 
 ---
 

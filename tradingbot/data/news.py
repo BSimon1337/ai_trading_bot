@@ -47,6 +47,7 @@ class DataHandler:
         self.last_news_source = "external"
         self.last_news_records: List[dict[str, Any]] = []
         self.last_headline_preview: list[str] = []
+        self.last_headline_preview_records: list[dict[str, Any]] = []
         self.last_headline_count = 0
         self.last_news_window_start = ""
         self.last_news_window_end = ""
@@ -54,6 +55,32 @@ class DataHandler:
         self._stock_client: Any | None = None
         self._crypto_client: Any | None = None
         self._news_client: Any | None = None
+
+    @staticmethod
+    def _bounded_headline_records(
+        records: List[dict[str, Any]],
+        limit: int = DEFAULT_HEADLINE_PREVIEW_LIMIT,
+    ) -> list[dict[str, Any]]:
+        bounded: list[dict[str, Any]] = []
+        for record in records:
+            headline = str(record.get("headline", "")).strip()
+            if not headline:
+                continue
+            bounded.append(
+                {
+                    "headline": headline,
+                    "source": str(record.get("source", "")).strip(),
+                    "published_at": str(
+                        record.get("published_at")
+                        or record.get("created_at")
+                        or record.get("updated_at")
+                        or ""
+                    ).strip(),
+                }
+            )
+            if len(bounded) >= limit:
+                break
+        return bounded
 
     def _update_news_metadata(
         self,
@@ -66,11 +93,8 @@ class DataHandler:
     ) -> None:
         self.last_news_source = source
         self.last_news_records = list(records)
-        self.last_headline_preview = [
-            str(record.get("headline", "")).strip()
-            for record in records
-            if str(record.get("headline", "")).strip()
-        ][:preview_limit]
+        self.last_headline_preview_records = self._bounded_headline_records(records, limit=preview_limit)
+        self.last_headline_preview = [record["headline"] for record in self.last_headline_preview_records]
         self.last_headline_count = len(self.last_headline_preview)
         if records:
             self.last_headline_count = sum(

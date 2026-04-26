@@ -354,6 +354,10 @@
             <div class="v" style="font-size:14px">{{ instance.sentiment_availability_state }}</div>
           </div>
           <div class="mini">
+            <div class="k">Sentiment Freshness</div>
+            <div class="v" style="font-size:14px">{% if instance.sentiment_is_stale %}Stale{% else %}Current{% endif %}</div>
+          </div>
+          <div class="mini">
             <div class="k">Mode / Asset</div>
             <div class="v">{{ instance.latest_mode }} / {{ instance.latest_asset_class }}</div>
           </div>
@@ -406,7 +410,11 @@
           {% if instance.sentiment_is_fallback %}
           | fallback
           {% endif %}
+          {% if instance.sentiment_is_stale %}
+          | stale
+          {% endif %}
         </p>
+        <p class="sentiment-meta" style="margin-top:4px">{{ instance.sentiment_state_message }}</p>
       </section>
       {% endfor %}
     </div>
@@ -442,6 +450,7 @@
         <div class="card"><div class="k">Sentiment Source</div><div class="v" style="font-size:14px">{{ instance.sentiment_source or "n/a" }}</div></div>
         <div class="card"><div class="k">Sentiment State</div><div class="v" style="font-size:14px">{{ instance.sentiment_availability_state }}</div></div>
         <div class="card"><div class="k">Sentiment Fallback</div><div class="v" style="font-size:14px">{% if instance.sentiment_is_fallback %}Yes{% else %}No{% endif %}</div></div>
+        <div class="card"><div class="k">Sentiment Stale</div><div class="v" style="font-size:14px">{% if instance.sentiment_is_stale %}Yes{% else %}No{% endif %}</div></div>
         <div class="card"><div class="k">Sentiment Updated</div><div class="v" style="font-size:14px">{{ instance.sentiment_last_updated_utc or "Unavailable" }}</div></div>
         <div class="card"><div class="k">Last Decision</div><div class="v" style="font-size:14px">{{ instance.last_decision_utc or "Unavailable" }}</div></div>
         <div class="card"><div class="k">Last Fill</div><div class="v" style="font-size:14px">{{ instance.last_fill_utc or "Unavailable" }}</div></div>
@@ -469,6 +478,61 @@
           <p class="chart-title">{{ instance.label }} Actions Last 7 Days</p>
           <canvas id="actionsChart-{{ instance.label }}" width="560" height="170"></canvas>
         </div>
+      </div>
+
+      <div class="panel">
+        <h2>{{ instance.label }} Recent Headlines</h2>
+        {% if instance.headline_preview %}
+        <ul class="issue-list">
+          {% for headline in instance.headline_preview %}
+          <li class="issue-info">{{ headline }}</li>
+          {% endfor %}
+        </ul>
+        <div class="empty" style="padding-top:0">
+          {{ instance.headline_count }} headline(s) in current window
+          {% if instance.sentiment_headline_source_window.window_start or instance.sentiment_headline_source_window.window_end %}
+          | window: {{ instance.sentiment_headline_source_window.window_start or "?" }} to {{ instance.sentiment_headline_source_window.window_end or "?" }}
+          {% endif %}
+          | source: {{ instance.sentiment_headline_source_window.source or instance.sentiment_source or "n/a" }}
+          {% if instance.sentiment_headline_source_window.is_stale %}
+          | stale
+          {% endif %}
+        </div>
+        {% else %}
+        <div class="empty">{{ instance.sentiment_state_message }}</div>
+        {% endif %}
+      </div>
+
+      <div class="panel">
+        <h2>{{ instance.label }} Sentiment Trend</h2>
+        {% if instance.sentiment_trend %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>timestamp</th>
+                <th>label</th>
+                <th>probability</th>
+                <th>source</th>
+                <th>availability_state</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in instance.sentiment_trend %}
+              <tr>
+                <td>{{ row.timestamp }}</td>
+                <td class="sentiment-{{ row.label or 'neutral' }}">{{ row.label or "Unavailable" }}</td>
+                <td>{% if row.probability is not none %}{{ "%.2f"|format(row.probability) }}{% else %}Unavailable{% endif %}</td>
+                <td>{{ row.source or "n/a" }}</td>
+                <td>{{ row.availability_state }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">No recent sentiment trend entries yet.</div>
+        {% endif %}
       </div>
 
       <div class="panel">

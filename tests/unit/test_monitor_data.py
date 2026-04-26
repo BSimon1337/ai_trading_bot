@@ -278,6 +278,132 @@ def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_p
     assert real_item["sentiment_is_fallback"] is False
 
 
+def test_dashboard_status_exposes_bounded_headline_preview_per_instance(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    write_decisions(
+        paths["decisions"],
+        [
+            _sentiment_row(
+                symbol="BTC/USD",
+                headline_count="6",
+                headline_preview='["Headline 1","Headline 2","Headline 3","Headline 4","Headline 5"]',
+            )
+        ],
+    )
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["headline_count"] == 6
+    assert item["headline_preview"] == ["Headline 1", "Headline 2", "Headline 3"]
+    assert item["sentiment_headline_source_window"]["window_start"] == "2026-04-23"
+    assert item["sentiment_headline_source_window"]["window_end"] == "2026-04-26"
+
+
+def test_dashboard_status_exposes_recent_sentiment_trend_entries(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    write_decisions(
+        paths["decisions"],
+        [
+            _sentiment_row(symbol="ETH/USD", timestamp="2026-04-26T14:00:00+00:00", sentiment_label="negative", sentiment_probability="0.72"),
+            _sentiment_row(symbol="ETH/USD", timestamp="2026-04-26T14:15:00+00:00", sentiment_label="neutral", sentiment_probability="0.53"),
+            _sentiment_row(symbol="ETH/USD", timestamp="2026-04-26T14:30:00+00:00", sentiment_label="positive", sentiment_probability="0.88"),
+        ],
+    )
+    instance = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    trend = payload["instances"][0]["sentiment_trend"]
+
+    assert len(trend) == 3
+    assert trend[0]["label"] == "negative"
+    assert trend[-1]["label"] == "positive"
+    assert trend[-1]["availability_state"] == "news_scored"
+
+
+def test_dashboard_status_marks_stale_sentiment_state_when_observed_at_is_old(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    write_decisions(
+        paths["decisions"],
+        [
+            _sentiment_row(
+                symbol="BTC/USD",
+                timestamp="2026-04-26T15:00:00+00:00",
+                sentiment_observed_at="2026-04-26T10:00:00+00:00",
+                sentiment_label="positive",
+                sentiment_source="external",
+                sentiment_availability_state="news_scored",
+                sentiment_is_fallback="false",
+            )
+        ],
+    )
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["sentiment_is_stale"] is True
+    assert item["sentiment_availability_state"] == "stale_news_scored"
+    assert "stale" in item["sentiment_state_message"].lower()
+
+
+def test_dashboard_status_handles_no_headline_sentiment_state_cleanly(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    write_decisions(
+        paths["decisions"],
+        [
+            _sentiment_row(
+                symbol="ETH/USD",
+                sentiment_source="external",
+                sentiment_label="neutral",
+                sentiment_probability="0.0",
+                sentiment_availability_state="",
+                sentiment_is_fallback="false",
+                headline_count="0",
+                headline_preview="[]",
+            )
+        ],
+    )
+    instance = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["headline_count"] == 0
+    assert item["headline_preview"] == []
+    assert item["sentiment_availability_state"] == "no_headlines"
+    assert "No recent headlines" in item["sentiment_state_message"]
+
+
 def test_redact_sensitive_values_recurses_without_changing_safe_values():
     payload = {
         "api_key": "abc",

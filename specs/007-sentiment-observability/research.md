@@ -53,3 +53,15 @@
 **Alternatives considered**:
 
 - **Combine sentiment observability with interactive strategy tuning**: Rejected because runtime control deserves its own dedicated safety-focused feature.
+
+## Validation Outcome: No New Dependencies Or Control-Plane Behavior Were Needed
+
+**Decision**: Keep the implementation inside the existing Flask/template monitor, CSV runtime evidence, and tray read-only surface with no additional packages and no interactive trading controls.
+
+**Rationale**: The existing monitor path was already flexible enough to carry sentiment snapshot fields, bounded headline previews, and short trend history. Extending that path preserved the repo's local-operator workflow and avoided mixing observability work with runtime-control design.
+
+**Confirmed impact**:
+
+- No new Python dependencies were introduced for sentiment observability.
+- The tray menu remains limited to opening the dashboard, refreshing status, and exiting the monitor.
+- No broker execution, approval, cancellation, or strategy-tuning behavior was added as part of this feature.

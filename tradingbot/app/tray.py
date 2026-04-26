@@ -15,6 +15,7 @@ from tradingbot.app.monitor import (
 
 
 TRAY_MENU_ACTIONS = ("Open Dashboard", "Refresh Status", "Exit Monitor")
+TRAY_READ_ONLY_MESSAGE = "Sentiment monitoring remains read-only."
 TRAY_STATE_META = {
     "failed": ("AI Trading Bot Monitor (Critical)", "Critical monitor issue detected.", "#C0392B"),
     "blocked": ("AI Trading Bot Monitor (Blocked)", "A live safeguard blocked execution.", "#D35400"),
@@ -105,6 +106,7 @@ class TrayController:
                 "dashboard_url": build_dashboard_url(self.config),
                 "reason": self.dependencies.reason or "Tray dependencies are unavailable.",
                 "state": self.state.state,
+                "read_only": True,
             }
         icon = self.create_icon()
         if detached and hasattr(icon, "run_detached"):
@@ -114,6 +116,7 @@ class TrayController:
             "dashboard_url": build_dashboard_url(self.config),
             "reason": "",
             "state": self.state.state,
+            "read_only": True,
         }
 
     def _menu_open_dashboard(self, icon: Any | None = None, item: Any | None = None) -> str:
@@ -168,7 +171,7 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     else:
         issue_summary = f"Issues: {issue_count}."
     historical_summary = f" Historical: {historical_issue_count}." if historical_issue_count else ""
-    tooltip = f"{summary} Instances: {instance_count}. {issue_summary} Notes: {note_count}.{historical_summary}"
+    tooltip = f"{summary} Instances: {instance_count}. {issue_summary} Notes: {note_count}.{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
     return TrayState(
         label=label,
         state=aggregate_state,

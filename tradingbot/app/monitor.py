@@ -115,8 +115,10 @@ class SentimentSnapshot:
     source: str = ""
     availability_state: str = "unavailable"
     is_fallback: bool = False
+    is_stale: bool = False
     observed_at: str = ""
     decision_mode: str = ""
+    message: str = "Sentiment evidence is unavailable."
 
 
 @dataclass(frozen=True)
@@ -383,6 +385,19 @@ def _parse_headline_preview(value: Any, limit: int = DEFAULT_HEADLINE_PREVIEW_LI
     return (parsed_text,) if parsed_text else ()
 
 
+def _timestamp_is_stale(
+    value: str,
+    *,
+    reference: datetime | None = None,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> bool:
+    timestamp = _parse_instance_timestamp(value)
+    if timestamp is None:
+        return False
+    cutoff = _active_evidence_cutoff(reference=reference, active_minutes=stale_after_minutes)
+    return timestamp < cutoff
+
+
 def _infer_sentiment_availability_state(
     source: str,
     label: str,
@@ -398,6 +413,26 @@ def _infer_sentiment_availability_state(
     )
 
 
+def _sentiment_state_message(state: str) -> str:
+    messages = {
+        "news_scored": "FinBERT scored recent external headlines.",
+        "local_fixture_scored": "FinBERT scored recent local fixture headlines.",
+        "local_fixture_unavailable": "Local fixture news was available, but no usable sentiment evidence was produced.",
+        "neutral_fallback": "Using neutral fallback because recent sentiment inputs were unavailable.",
+        "no_headlines": "No recent headlines were available for sentiment scoring.",
+        "scored": "Recent sentiment evidence was scored successfully.",
+        "unavailable": "Sentiment evidence is unavailable.",
+        "stale_news_scored": "Latest scored headline sentiment is stale and older than the active monitor window.",
+        "stale_local_fixture_scored": "Latest local-fixture sentiment is stale and older than the active monitor window.",
+        "stale_local_fixture_unavailable": "Latest local-fixture sentiment evidence is stale and older than the active monitor window.",
+        "stale_neutral_fallback": "Fallback sentiment is stale and older than the active monitor window.",
+        "stale_no_headlines": "No recent headlines were available, and the latest sentiment context is stale.",
+        "stale_scored": "Latest sentiment evidence is stale and older than the active monitor window.",
+        "stale_unavailable": "Sentiment evidence is unavailable and stale.",
+    }
+    return messages.get(state, "Sentiment evidence is available.")
+
+
 def _sentiment_snapshot(summary: DecisionSummary | None) -> SentimentSnapshot:
     if summary is None:
         return SentimentSnapshot()
@@ -411,6 +446,10 @@ def _sentiment_snapshot(summary: DecisionSummary | None) -> SentimentSnapshot:
         headline_count,
         summary.sentiment_availability_state,
     )
+    observed_at = summary.sentiment_observed_at or summary.timestamp
+    is_stale = _timestamp_is_stale(observed_at)
+    if is_stale and not availability_state.startswith("stale_"):
+        availability_state = f"stale_{availability_state}"
     return SentimentSnapshot(
         symbol=summary.symbol,
         label=summary.sentiment_label,
@@ -418,8 +457,10 @@ def _sentiment_snapshot(summary: DecisionSummary | None) -> SentimentSnapshot:
         source=summary.sentiment_source,
         availability_state=availability_state,
         is_fallback=to_bool(summary.sentiment_is_fallback, default=summary.sentiment_source == "neutral_fallback"),
-        observed_at=summary.sentiment_observed_at or summary.timestamp,
+        is_stale=is_stale,
+        observed_at=observed_at,
         decision_mode=summary.mode,
+        message=_sentiment_state_message(availability_state),
     )
 
 
@@ -439,7 +480,7 @@ def _headline_evidence_preview(
         source=summary.sentiment_source,
         window_start=summary.sentiment_window_start,
         window_end=summary.sentiment_window_end,
-        is_stale=False,
+        is_stale=_timestamp_is_stale(summary.sentiment_observed_at or summary.timestamp),
     )
 
 
@@ -480,8 +521,10 @@ def _sentiment_snapshot_to_dict(snapshot: SentimentSnapshot) -> dict[str, Any]:
         "source": snapshot.source,
         "availability_state": snapshot.availability_state,
         "is_fallback": snapshot.is_fallback,
+        "is_stale": snapshot.is_stale,
         "observed_at": snapshot.observed_at,
         "decision_mode": snapshot.decision_mode,
+        "message": snapshot.message,
     }
 
 
@@ -1041,7 +1084,9 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "sentiment_source": current_sentiment.source,
         "sentiment_availability_state": current_sentiment.availability_state,
         "sentiment_is_fallback": current_sentiment.is_fallback,
+        "sentiment_is_stale": current_sentiment.is_stale,
         "sentiment_last_updated_utc": current_sentiment.observed_at,
+        "sentiment_state_message": current_sentiment.message,
         "headline_count": headline_preview.headline_count,
         "headline_preview": list(headline_preview.headlines),
         "sentiment_trend": [_sentiment_trend_to_dict(entry) for entry in sentiment_trend],

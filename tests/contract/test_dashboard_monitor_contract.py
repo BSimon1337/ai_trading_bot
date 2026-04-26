@@ -79,6 +79,10 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "sentiment_availability_state",
         "sentiment_is_fallback",
         "sentiment_last_updated_utc",
+        "headline_count",
+        "headline_preview",
+        "sentiment_trend",
+        "sentiment_headline_source_window",
     }
     assert health_response.status_code == 200
     assert health_response.get_json()["ok"] is True
@@ -86,6 +90,8 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert b"Trading Bot Monitor" in page_response.data
     assert b"Recent Decisions Across Monitored Instances" in page_response.data
     assert b"Sentiment State" in page_response.data
+    assert b"Recent Headlines" in page_response.data
+    assert b"Sentiment Trend" in page_response.data
 
 
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):
@@ -226,3 +232,59 @@ def test_dashboard_contract_exposes_active_and_historical_context_separately(tmp
     assert payload["historical_context"]["historical_instance_count"] == 1
     assert payload["historical_context"]["historical_issue_count"] >= 1
     assert "Historical Context" in page_text
+
+
+def test_dashboard_contract_renders_stale_and_no_headline_sentiment_states(tmp_path):
+    stale_paths = create_monitor_fixture(tmp_path / "stale_sentiment", "healthy", symbol="BTC/USD")
+    fallback_paths = create_monitor_fixture(tmp_path / "no_headlines", "healthy", symbol="ETH/USD")
+    stale_paths["decisions"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,sentiment_availability_state,sentiment_is_fallback,sentiment_observed_at,headline_count,headline_preview,sentiment_window_start,sentiment_window_end,quantity,portfolio_value,cash,reason,result",
+                "2026-04-26T15:00:00+00:00,live,BTC/USD,crypto,hold,model,0.7,external,0.8,positive,news_scored,false,2026-04-26T10:00:00+00:00,3,\"[\"\"H1\"\",\"\"H2\"\",\"\"H3\"\"]\",2026-04-23,2026-04-26,0,100,90,hold,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fallback_paths["decisions"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,sentiment_availability_state,sentiment_is_fallback,sentiment_observed_at,headline_count,headline_preview,sentiment_window_start,sentiment_window_end,quantity,portfolio_value,cash,reason,result",
+                "2026-04-26T15:00:00+00:00,live,ETH/USD,crypto,hold,model,0.6,external,0.0,neutral,,false,2026-04-26T15:00:00+00:00,0,[],2026-04-23,2026-04-26,0,100,90,hold,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=stale_paths["decisions"],
+                fill_log_path=stale_paths["fills"],
+                snapshot_log_path=stale_paths["snapshot"],
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=fallback_paths["decisions"],
+                fill_log_path=fallback_paths["fills"],
+                snapshot_log_path=fallback_paths["snapshot"],
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    stale_item = next(item for item in payload["instances"] if item["label"] == "BTC/USD")
+    no_headline_item = next(item for item in payload["instances"] if item["label"] == "ETH/USD")
+
+    assert stale_item["sentiment_availability_state"] == "stale_news_scored"
+    assert stale_item["sentiment_is_stale"] is True
+    assert no_headline_item["sentiment_availability_state"] == "no_headlines"
+    assert "No recent headlines were available for sentiment scoring." in page_text
+    assert "Stale" in page_text

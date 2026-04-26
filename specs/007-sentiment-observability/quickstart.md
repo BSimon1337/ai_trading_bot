@@ -63,6 +63,16 @@ Expected result:
 - The dashboard shows a short recent sentiment trend or history.
 - Operators can tell whether sentiment has been stable, changing, or unavailable without opening raw files.
 
+## Validate Stale And No-Headline Sentiment
+
+Use evidence where one symbol has a current decision row but an older `sentiment_observed_at`, and another symbol has `headline_count=0`.
+
+Expected result:
+
+- The stale symbol is explicitly marked as stale rather than fresh.
+- The no-headline symbol explains that no recent headlines were available.
+- Fallback or no-headline messaging remains informational and does not become a false critical runtime issue.
+
 ## Automated Validation
 
 Run:
@@ -76,6 +86,7 @@ Expected result:
 
 - Tests pass.
 - Current sentiment visibility, fallback-state handling, bounded headline previews, and dashboard rendering are covered.
+- Stale sentiment and no-headline sentiment rendering are covered.
 
 ## Safety Check
 
@@ -83,3 +94,10 @@ Expected result:
 
 - The monitor remains read-only.
 - No order placement, order cancellation, or live-approval behavior is introduced by this feature.
+
+## Manual Validation Notes
+
+- Confirm a stale sentiment row still shows the latest runtime status correctly while labeling the sentiment context as stale.
+- Confirm a fallback-neutral or no-headline symbol still renders a readable sentiment explanation instead of empty cells.
+- Confirm the tray remains view-only: open dashboard, refresh status, and exit monitor are still the only tray actions.
+- Record whether the dashboard shows current sentiment, headline previews, and trend history for each actively monitored symbol after a live refresh.

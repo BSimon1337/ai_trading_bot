@@ -273,6 +273,7 @@ class SentimentMLStrategy(Strategy):
         sentiment_source: str | None,
     ) -> dict[str, object]:
         headline_preview = list(getattr(self.data_handler, "last_headline_preview", []) or [])
+        headline_preview_records = list(getattr(self.data_handler, "last_headline_preview_records", []) or [])
         headline_count = int(getattr(self.data_handler, "last_headline_count", len(headline_preview)) or 0)
         source = str(sentiment_source or "")
         label = str(sentiment_label or "")
@@ -294,7 +295,10 @@ class SentimentMLStrategy(Strategy):
             "sentiment_is_fallback": str(source == "neutral_fallback").lower(),
             "sentiment_observed_at": getattr(self.data_handler, "last_news_observed_at", "") or self.get_datetime().isoformat(),
             "headline_count": headline_count,
-            "headline_preview": json.dumps(headline_preview, ensure_ascii=True),
+            "headline_preview": json.dumps(
+                headline_preview if headline_preview else [record.get("headline", "") for record in headline_preview_records],
+                ensure_ascii=True,
+            ),
             "sentiment_window_start": getattr(self.data_handler, "last_news_window_start", ""),
             "sentiment_window_end": getattr(self.data_handler, "last_news_window_end", ""),
         }

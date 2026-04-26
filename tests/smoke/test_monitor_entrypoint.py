@@ -111,3 +111,56 @@ def test_monitor_app_handles_current_and_archived_evidence_without_polluting_liv
     assert len(payload["instances"]) == 1
     assert payload["historical_context"]["historical_instance_count"] == 1
     assert "Historical Context" in page_text
+
+
+def test_monitor_app_renders_mixed_sentiment_fallback_and_stale_evidence(tmp_path):
+    current_paths = create_monitor_fixture(tmp_path / "current", "healthy", symbol="BTC/USD")
+    fallback_paths = create_monitor_fixture(tmp_path / "fallback", "healthy", symbol="ETH/USD")
+    current_paths["decisions"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,sentiment_availability_state,sentiment_is_fallback,sentiment_observed_at,headline_count,headline_preview,sentiment_window_start,sentiment_window_end,quantity,portfolio_value,cash,reason,result",
+                "2026-04-26T15:00:00+00:00,live,BTC/USD,crypto,hold,model,0.7,external,0.82,positive,news_scored,false,2026-04-26T10:00:00+00:00,3,\"[\"\"BTC gains on ETF chatter\"\",\"\"Volume rises\"\",\"\"Risk appetite improves\"\"]\",2026-04-23,2026-04-26,0,100,90,hold,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fallback_paths["decisions"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,sentiment_availability_state,sentiment_is_fallback,sentiment_observed_at,headline_count,headline_preview,sentiment_window_start,sentiment_window_end,quantity,portfolio_value,cash,reason,result",
+                "2026-04-26T15:00:00+00:00,live,ETH/USD,crypto,hold,model,0.55,neutral_fallback,0.0,neutral,neutral_fallback,true,2026-04-26T15:00:00+00:00,0,[],2026-04-23,2026-04-26,0,100,90,hold,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    client = monitor_app.create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=current_paths["decisions"],
+                fill_log_path=current_paths["fills"],
+                snapshot_log_path=current_paths["snapshot"],
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=fallback_paths["decisions"],
+                fill_log_path=fallback_paths["fills"],
+                snapshot_log_path=fallback_paths["snapshot"],
+            ),
+        )
+    ).test_client()
+
+    response = client.get("/")
+    payload = client.get("/api/status").get_json()
+    page_text = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "Recent Headlines" in page_text
+    assert "Sentiment Trend" in page_text
+    assert any(item["sentiment_availability_state"] == "stale_news_scored" for item in payload["instances"])
+    assert any(item["sentiment_is_fallback"] is True for item in payload["instances"])
