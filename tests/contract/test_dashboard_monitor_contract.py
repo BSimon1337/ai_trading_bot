@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture
 from tradingbot.app.monitor import DashboardInstance, create_app
 
@@ -153,11 +155,12 @@ def test_dashboard_contract_renders_recent_issues_and_critical_states(tmp_path):
 
 def test_dashboard_contract_exposes_notes_separately_from_issues(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "no_recent_fill", symbol="BTC/USD")
+    now = datetime.now(timezone.utc)
     paths["snapshot"].write_text(
         "\n".join(
             [
                 "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
-                "2026-04-25T17:20:00+00:00,live,BTC/USD,99.0,80.0,2.0,-0.5",
+                f"{now.isoformat()},live,BTC/USD,99.0,80.0,2.0,-0.5",
             ]
         ),
         encoding="utf-8",

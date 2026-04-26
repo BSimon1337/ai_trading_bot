@@ -302,7 +302,7 @@
         <div class="card"><div class="k">Account Equity</div><div class="v">${{ "%.2f"|format(account_overview.account_equity) }}</div></div>
         <div class="card"><div class="k">Cash</div><div class="v">${{ "%.2f"|format(account_overview.cash) }}</div></div>
         <div class="card"><div class="k">Day PnL</div><div class="v {% if account_overview.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(account_overview.day_pnl) }}</div></div>
-        <div class="card"><div class="k">Active Instances</div><div class="v">{{ account_overview.instances_count }}</div></div>
+        <div class="card"><div class="k">Monitored Instances</div><div class="v">{{ account_overview.instances_count }}</div></div>
         <div class="card"><div class="k">Instances With Fills</div><div class="v">{{ account_overview.instances_with_fills }}</div></div>
         <div class="card"><div class="k">Overview Source</div><div class="v" style="font-size:14px">{{ account_overview.source_instance or "n/a" }}</div></div>
         <div class="card"><div class="k">Overview Freshness</div><div class="v" style="font-size:14px">{% if account_overview.is_stale %}Stale{% else %}Current{% endif %}</div></div>
@@ -515,7 +515,7 @@
       </div>
 
       <div class="panel">
-        <h2>{{ instance.label }} Historical Issue Preview</h2>
+        <h2>{{ instance.label }} Historical Context</h2>
         {% if instance.historical_issues %}
         <ul class="issue-list">
           {% for issue in instance.historical_issues %}
@@ -523,7 +523,7 @@
           {% endfor %}
         </ul>
         {% else %}
-        <div class="empty">No bounded historical issue preview for this instance.</div>
+        <div class="empty">No retained historical issue preview for this instance.</div>
         {% endif %}
       </div>
     </section>

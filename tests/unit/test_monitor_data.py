@@ -279,14 +279,15 @@ def test_dashboard_status_prefers_current_healthy_restart_over_old_failed_eviden
 
 def test_dashboard_status_bounds_historical_issue_reporting(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "mixed_current_historical", symbol="BTC/USD")
+    now = datetime.now(timezone.utc)
     Path(paths["decisions"]).write_text(
         "\n".join(
             [
                 "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
-                "2026-04-25T10:00:00+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,old failed one,failed",
-                "2026-04-25T11:00:00+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,old failed two,failed",
-                "2026-04-25T12:00:00+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,old failed three,failed",
-                "2026-04-25T17:05:00+00:00,live,BTC/USD,crypto,hold,model,0.65,external,1.0,neutral,0,100.0,90.0,delta_qty_zero,skipped",
+                f"{(now - pd.Timedelta(hours=4)).isoformat()},active-live,SYSTEM,system,hold,guardrail,,,,,0,,,old failed one,failed",
+                f"{(now - pd.Timedelta(hours=3, minutes=30)).isoformat()},active-live,SYSTEM,system,hold,guardrail,,,,,0,,,old failed two,failed",
+                f"{(now - pd.Timedelta(hours=3, minutes=10)).isoformat()},active-live,SYSTEM,system,hold,guardrail,,,,,0,,,old failed three,failed",
+                f"{(now - pd.Timedelta(minutes=5)).isoformat()},live,BTC/USD,crypto,hold,model,0.65,external,1.0,neutral,0,100.0,90.0,delta_qty_zero,skipped",
             ]
         ),
         encoding="utf-8",
@@ -340,11 +341,12 @@ def test_dashboard_status_ignores_archived_instance_for_current_aggregate_state(
 
 def test_dashboard_status_separates_negative_pnl_into_notes_not_issues(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "no_recent_fill", symbol="BTC/USD")
+    now = datetime.now(timezone.utc)
     Path(paths["snapshot"]).write_text(
         "\n".join(
             [
                 "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
-                "2026-04-25T17:20:00+00:00,live,BTC/USD,99.0,80.0,2.0,-0.5",
+                f"{now.isoformat()},live,BTC/USD,99.0,80.0,2.0,-0.5",
             ]
         ),
         encoding="utf-8",
@@ -508,13 +510,14 @@ def test_dashboard_status_includes_cross_instance_recent_activity(tmp_path):
 def test_dashboard_status_includes_account_overview_from_freshest_instance(tmp_path):
     btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
     eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    now = datetime.now(timezone.utc)
     btc_decisions = Path(btc_paths["decisions"])
     eth_decisions = Path(eth_paths["decisions"])
     btc_decisions.write_text(
         "\n".join(
             [
                 "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
-                "2026-04-25T17:00:00+00:00,live,BTC/USD,crypto,hold,model,0.60,external,1.0,neutral,0,100.0,90.0,no_signal,skipped",
+                f"{(now - pd.Timedelta(minutes=10)).isoformat()},live,BTC/USD,crypto,hold,model,0.60,external,1.0,neutral,0,100.0,90.0,no_signal,skipped",
             ]
         ),
         encoding="utf-8",
@@ -523,7 +526,7 @@ def test_dashboard_status_includes_account_overview_from_freshest_instance(tmp_p
         "\n".join(
             [
                 "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
-                "2026-04-25T17:05:00+00:00,live,ETH/USD,crypto,buy,model,0.70,external,1.0,neutral,0.004,101.5,88.0,submitted,submitted",
+                f"{(now - pd.Timedelta(minutes=5)).isoformat()},live,ETH/USD,crypto,buy,model,0.70,external,1.0,neutral,0.004,101.5,88.0,submitted,submitted",
             ]
         ),
         encoding="utf-8",
@@ -533,7 +536,7 @@ def test_dashboard_status_includes_account_overview_from_freshest_instance(tmp_p
         "\n".join(
             [
                 "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
-                "2026-04-25T17:00:00+00:00,live,BTC/USD,100.0,90.0,0.1,0.0",
+                f"{(now - pd.Timedelta(minutes=10)).isoformat()},live,BTC/USD,100.0,90.0,0.1,0.0",
             ]
         ),
         encoding="utf-8",
@@ -542,7 +545,7 @@ def test_dashboard_status_includes_account_overview_from_freshest_instance(tmp_p
         "\n".join(
             [
                 "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
-                "2026-04-25T17:05:00+00:00,live,ETH/USD,100.0,100.0,0.0,0.0",
+                f"{(now - pd.Timedelta(minutes=5)).isoformat()},live,ETH/USD,100.0,100.0,0.0,0.0",
             ]
         ),
         encoding="utf-8",

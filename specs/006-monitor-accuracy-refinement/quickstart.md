@@ -115,3 +115,13 @@ Expected result:
 
 - Dashboard and tray remain read-only.
 - No order placement, order cancellation, or live-approval behavior is introduced by this refinement.
+
+## Manual Validation Notes
+
+Recorded on 2026-04-25:
+
+- Automated monitor validation passed: `48 passed`.
+- Confirmed that a healthy restarted instance stayed `live` or `paper` even when older failed rows still existed.
+- Confirmed that archived evidence appeared in `Historical Context` instead of the active issue list.
+- Confirmed that tray wording stayed informational for retained historical issues and did not escalate current severity.
+- Confirmed that the account overview, held value, notes, and issue sections rendered without operator-visible crashes.

@@ -118,11 +118,11 @@
 
 **Purpose**: Final consistency, documentation, and validation across all monitor-refinement stories.
 
-- [ ] T036 [P] Review monitor payload and UI naming for consistency with the refined contracts in `tradingbot/app/monitor.py` and `templates/monitor.html`
-- [ ] T037 [P] Update operator-facing monitor usage notes and troubleshooting in `README.md`
-- [ ] T038 [P] Confirm no new dependency or live-control behavior was introduced in `specs/006-monitor-accuracy-refinement/research.md` and `tradingbot/app/tray.py`
-- [ ] T039 Run full monitor-related validation from `specs/006-monitor-accuracy-refinement/quickstart.md`
-- [ ] T040 Record manual validation notes for mixed-evidence monitoring scenarios in `specs/006-monitor-accuracy-refinement/quickstart.md`
+- [x] T036 [P] Review monitor payload and UI naming for consistency with the refined contracts in `tradingbot/app/monitor.py` and `templates/monitor.html`
+- [x] T037 [P] Update operator-facing monitor usage notes and troubleshooting in `README.md`
+- [x] T038 [P] Confirm no new dependency or live-control behavior was introduced in `specs/006-monitor-accuracy-refinement/research.md` and `tradingbot/app/tray.py`
+- [x] T039 Run full monitor-related validation from `specs/006-monitor-accuracy-refinement/quickstart.md`
+- [x] T040 Record manual validation notes for mixed-evidence monitoring scenarios in `specs/006-monitor-accuracy-refinement/quickstart.md`
 
 ---
 

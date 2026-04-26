@@ -67,3 +67,14 @@
 
 - **Leave the operator to infer activity from raw tables**: Rejected because it slows diagnosis and undermines the monitor’s purpose.
 - **Show only latest action/reason**: Rejected because it hides whether the bot has actually been evaluating recently or filling trades.
+## Confirmation: Refinement Stayed Read-Only and Dependency-Neutral
+
+**Decision**: Keep the refinement inside the existing monitor, tray, and template modules without adding broker polling, trade controls, or new dependencies.
+
+**Rationale**: This feature is about trust, clarity, and safe evidence handling. Adding control behavior or new packages would expand risk without helping the core operator problem.
+
+**Validation outcome**:
+
+- No new Python packages were introduced.
+- `tradingbot/app/tray.py` still opens the dashboard, refreshes monitor state, and exits the tray only.
+- The monitor remains evidence-driven and read-only.
