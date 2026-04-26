@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, List
 
 import pandas as pd
@@ -16,6 +17,7 @@ except ImportError:  # pragma: no cover - optional in bare environments
 
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_HEADLINE_PREVIEW_LIMIT = 3
 
 
 def _load_env_files() -> None:
@@ -43,9 +45,64 @@ class DataHandler:
         self.offline_news_enabled = _get_bool_env("OFFLINE_NEWS_ENABLED", False) if offline_news_enabled is None else offline_news_enabled
         self.offline_news_dir = offline_news_dir or os.getenv("OFFLINE_NEWS_DIR", "data/offline_news")
         self.last_news_source = "external"
+        self.last_news_records: List[dict[str, Any]] = []
+        self.last_headline_preview: list[str] = []
+        self.last_headline_preview_records: list[dict[str, Any]] = []
+        self.last_headline_count = 0
+        self.last_news_window_start = ""
+        self.last_news_window_end = ""
+        self.last_news_observed_at = ""
         self._stock_client: Any | None = None
         self._crypto_client: Any | None = None
         self._news_client: Any | None = None
+
+    @staticmethod
+    def _bounded_headline_records(
+        records: List[dict[str, Any]],
+        limit: int = DEFAULT_HEADLINE_PREVIEW_LIMIT,
+    ) -> list[dict[str, Any]]:
+        bounded: list[dict[str, Any]] = []
+        for record in records:
+            headline = str(record.get("headline", "")).strip()
+            if not headline:
+                continue
+            bounded.append(
+                {
+                    "headline": headline,
+                    "source": str(record.get("source", "")).strip(),
+                    "published_at": str(
+                        record.get("published_at")
+                        or record.get("created_at")
+                        or record.get("updated_at")
+                        or ""
+                    ).strip(),
+                }
+            )
+            if len(bounded) >= limit:
+                break
+        return bounded
+
+    def _update_news_metadata(
+        self,
+        *,
+        source: str,
+        records: List[dict[str, Any]],
+        start: str,
+        end: str,
+        preview_limit: int = DEFAULT_HEADLINE_PREVIEW_LIMIT,
+    ) -> None:
+        self.last_news_source = source
+        self.last_news_records = list(records)
+        self.last_headline_preview_records = self._bounded_headline_records(records, limit=preview_limit)
+        self.last_headline_preview = [record["headline"] for record in self.last_headline_preview_records]
+        self.last_headline_count = len(self.last_headline_preview)
+        if records:
+            self.last_headline_count = sum(
+                1 for record in records if str(record.get("headline", "")).strip()
+            )
+        self.last_news_window_start = start
+        self.last_news_window_end = end
+        self.last_news_observed_at = datetime.now(timezone.utc).isoformat()
 
     def _client_or_raise(self) -> tuple[Any, Any, Any]:
         from alpaca.data.historical import CryptoHistoricalDataClient, NewsClient, StockHistoricalDataClient
@@ -79,9 +136,19 @@ class DataHandler:
         if self.offline_news_enabled:
             records = self._get_offline_news_records(symbol=symbol, start=start, end=end, limit=limit)
             if records:
-                self.last_news_source = "local_fixture"
+                self._update_news_metadata(
+                    source="local_fixture",
+                    records=records,
+                    start=start,
+                    end=end,
+                )
                 return records
-            self.last_news_source = "neutral_fallback"
+            self._update_news_metadata(
+                source="neutral_fallback",
+                records=[],
+                start=start,
+                end=end,
+            )
             LOGGER.warning(
                 "Offline news enabled but no fixture records matched %s from %s to %s; using neutral sentiment fallback.",
                 symbol,
@@ -106,7 +173,12 @@ class DataHandler:
             try:
                 response = news_client.get_news(request)
             except Exception as exc:
-                self.last_news_source = "neutral_fallback"
+                self._update_news_metadata(
+                    source="neutral_fallback",
+                    records=[],
+                    start=start,
+                    end=end,
+                )
                 LOGGER.warning(
                     "Alpaca news fetch failed for %s from %s to %s; using neutral sentiment fallback. Error: %s",
                     symbol,
@@ -127,7 +199,12 @@ class DataHandler:
             if not page_token:
                 break
 
-        self.last_news_source = "external" if all_records else "neutral_fallback"
+        self._update_news_metadata(
+            source="external" if all_records else "neutral_fallback",
+            records=all_records,
+            start=start,
+            end=end,
+        )
         return all_records
 
     def _get_offline_news_records(self, symbol: str, start: str, end: str, limit: int) -> List[dict]:

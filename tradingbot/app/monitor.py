@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ import pandas as pd
 from flask import Flask, jsonify, render_template
 
 from tradingbot.config.settings import BotConfig, infer_asset_class
+from tradingbot.sentiment.scoring import sentiment_availability_state
 
 
 DEFAULT_REFRESH_SECONDS = 15
@@ -21,6 +23,8 @@ SENSITIVE_KEYWORDS = ("key", "secret", "token", "password", "credential")
 VALUE_SOURCE_FILL = "latest_fill"
 VALUE_SOURCE_SNAPSHOT_DELTA = "snapshot_delta"
 VALUE_SOURCE_UNAVAILABLE = "unavailable"
+DEFAULT_HEADLINE_PREVIEW_LIMIT = 3
+DEFAULT_SENTIMENT_TREND_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,13 @@ class DecisionSummary:
     sentiment_source: str = ""
     sentiment_probability: str = ""
     sentiment_label: str = ""
+    sentiment_availability_state: str = ""
+    sentiment_is_fallback: str = ""
+    sentiment_observed_at: str = ""
+    headline_count: str = ""
+    headline_preview: str = ""
+    sentiment_window_start: str = ""
+    sentiment_window_end: str = ""
     quantity: str = ""
     portfolio_value: str = ""
     cash: str = ""
@@ -94,6 +105,40 @@ class NoteSummary:
     category: str
     message: str
     source: str
+
+
+@dataclass(frozen=True)
+class SentimentSnapshot:
+    symbol: str = ""
+    label: str = ""
+    probability: float | None = None
+    source: str = ""
+    availability_state: str = "unavailable"
+    is_fallback: bool = False
+    is_stale: bool = False
+    observed_at: str = ""
+    decision_mode: str = ""
+    message: str = "Sentiment evidence is unavailable."
+
+
+@dataclass(frozen=True)
+class HeadlineEvidencePreview:
+    symbol: str = ""
+    headline_count: int = 0
+    headlines: tuple[str, ...] = ()
+    source: str = ""
+    window_start: str = ""
+    window_end: str = ""
+    is_stale: bool = False
+
+
+@dataclass(frozen=True)
+class SentimentTrendEntry:
+    timestamp: str = ""
+    label: str = ""
+    probability: float | None = None
+    source: str = ""
+    availability_state: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -212,6 +257,14 @@ def to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def to_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def sanitize_symbol_for_path(symbol: str) -> str:
     normalized = symbol.strip().lower()
     return re.sub(r"[^a-z0-9]+", "", normalized)
@@ -310,6 +363,191 @@ def _clean_value(value: Any) -> str:
     except (TypeError, ValueError):
         pass
     return str(value)
+
+
+def _parse_headline_preview(value: Any, limit: int = DEFAULT_HEADLINE_PREVIEW_LIMIT) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, list):
+        headlines = [str(item).strip() for item in value if str(item).strip()]
+        return tuple(headlines[:limit])
+    text = str(value).strip()
+    if not text:
+        return ()
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = [text]
+    if isinstance(parsed, list):
+        headlines = [str(item).strip() for item in parsed if str(item).strip()]
+        return tuple(headlines[:limit])
+    parsed_text = str(parsed).strip()
+    return (parsed_text,) if parsed_text else ()
+
+
+def _timestamp_is_stale(
+    value: str,
+    *,
+    reference: datetime | None = None,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> bool:
+    timestamp = _parse_instance_timestamp(value)
+    if timestamp is None:
+        return False
+    cutoff = _active_evidence_cutoff(reference=reference, active_minutes=stale_after_minutes)
+    return timestamp < cutoff
+
+
+def _infer_sentiment_availability_state(
+    source: str,
+    label: str,
+    headline_count: int,
+    explicit_state: str = "",
+) -> str:
+    if explicit_state:
+        return explicit_state
+    return sentiment_availability_state(
+        source=source,
+        label=label,
+        headline_count=headline_count,
+    )
+
+
+def _sentiment_state_message(state: str) -> str:
+    messages = {
+        "news_scored": "FinBERT scored recent external headlines.",
+        "local_fixture_scored": "FinBERT scored recent local fixture headlines.",
+        "local_fixture_unavailable": "Local fixture news was available, but no usable sentiment evidence was produced.",
+        "neutral_fallback": "Using neutral fallback because recent sentiment inputs were unavailable.",
+        "no_headlines": "No recent headlines were available for sentiment scoring.",
+        "scored": "Recent sentiment evidence was scored successfully.",
+        "unavailable": "Sentiment evidence is unavailable.",
+        "stale_news_scored": "Latest scored headline sentiment is stale and older than the active monitor window.",
+        "stale_local_fixture_scored": "Latest local-fixture sentiment is stale and older than the active monitor window.",
+        "stale_local_fixture_unavailable": "Latest local-fixture sentiment evidence is stale and older than the active monitor window.",
+        "stale_neutral_fallback": "Fallback sentiment is stale and older than the active monitor window.",
+        "stale_no_headlines": "No recent headlines were available, and the latest sentiment context is stale.",
+        "stale_scored": "Latest sentiment evidence is stale and older than the active monitor window.",
+        "stale_unavailable": "Sentiment evidence is unavailable and stale.",
+    }
+    return messages.get(state, "Sentiment evidence is available.")
+
+
+def _sentiment_snapshot(summary: DecisionSummary | None) -> SentimentSnapshot:
+    if summary is None:
+        return SentimentSnapshot()
+    probability = None
+    if summary.sentiment_probability:
+        probability = to_float(summary.sentiment_probability, default=0.0)
+    headline_count = to_int(summary.headline_count, default=0)
+    availability_state = _infer_sentiment_availability_state(
+        summary.sentiment_source,
+        summary.sentiment_label,
+        headline_count,
+        summary.sentiment_availability_state,
+    )
+    observed_at = summary.sentiment_observed_at or summary.timestamp
+    is_stale = _timestamp_is_stale(observed_at)
+    if is_stale and not availability_state.startswith("stale_"):
+        availability_state = f"stale_{availability_state}"
+    return SentimentSnapshot(
+        symbol=summary.symbol,
+        label=summary.sentiment_label,
+        probability=probability,
+        source=summary.sentiment_source,
+        availability_state=availability_state,
+        is_fallback=to_bool(summary.sentiment_is_fallback, default=summary.sentiment_source == "neutral_fallback"),
+        is_stale=is_stale,
+        observed_at=observed_at,
+        decision_mode=summary.mode,
+        message=_sentiment_state_message(availability_state),
+    )
+
+
+def _headline_evidence_preview(
+    summary: DecisionSummary | None,
+    *,
+    preview_limit: int = DEFAULT_HEADLINE_PREVIEW_LIMIT,
+) -> HeadlineEvidencePreview:
+    if summary is None:
+        return HeadlineEvidencePreview()
+    headlines = _parse_headline_preview(summary.headline_preview, limit=preview_limit)
+    headline_count = to_int(summary.headline_count, default=len(headlines))
+    return HeadlineEvidencePreview(
+        symbol=summary.symbol,
+        headline_count=headline_count,
+        headlines=headlines,
+        source=summary.sentiment_source,
+        window_start=summary.sentiment_window_start,
+        window_end=summary.sentiment_window_end,
+        is_stale=_timestamp_is_stale(summary.sentiment_observed_at or summary.timestamp),
+    )
+
+
+def _sentiment_trend(
+    decisions: pd.DataFrame,
+    *,
+    limit: int = DEFAULT_SENTIMENT_TREND_LIMIT,
+) -> tuple[SentimentTrendEntry, ...]:
+    if decisions.empty:
+        return ()
+    trend_entries: list[SentimentTrendEntry] = []
+    recent = decisions.tail(limit * 3).to_dict(orient="records")
+    for row in reversed(recent):
+        summary = _row_to_summary(row, DecisionSummary)
+        snapshot = _sentiment_snapshot(summary)
+        if not snapshot.label and snapshot.availability_state == "unavailable":
+            continue
+        trend_entries.append(
+            SentimentTrendEntry(
+                timestamp=summary.timestamp,
+                label=snapshot.label,
+                probability=snapshot.probability,
+                source=snapshot.source,
+                availability_state=snapshot.availability_state,
+            )
+        )
+        if len(trend_entries) >= limit:
+            break
+    trend_entries.reverse()
+    return tuple(trend_entries)
+
+
+def _sentiment_snapshot_to_dict(snapshot: SentimentSnapshot) -> dict[str, Any]:
+    return {
+        "symbol": snapshot.symbol,
+        "label": snapshot.label,
+        "probability": snapshot.probability,
+        "source": snapshot.source,
+        "availability_state": snapshot.availability_state,
+        "is_fallback": snapshot.is_fallback,
+        "is_stale": snapshot.is_stale,
+        "observed_at": snapshot.observed_at,
+        "decision_mode": snapshot.decision_mode,
+        "message": snapshot.message,
+    }
+
+
+def _headline_preview_to_dict(preview: HeadlineEvidencePreview) -> dict[str, Any]:
+    return {
+        "symbol": preview.symbol,
+        "headline_count": preview.headline_count,
+        "headlines": list(preview.headlines),
+        "source": preview.source,
+        "window_start": preview.window_start,
+        "window_end": preview.window_end,
+        "is_stale": preview.is_stale,
+    }
+
+
+def _sentiment_trend_to_dict(entry: SentimentTrendEntry) -> dict[str, Any]:
+    return {
+        "timestamp": entry.timestamp,
+        "label": entry.label,
+        "probability": entry.probability,
+        "source": entry.source,
+        "availability_state": entry.availability_state,
+    }
 
 
 def _row_to_summary(row: dict[str, Any], summary_type: type[DecisionSummary] | type[FillSummary] | type[SnapshotSummary]):
@@ -812,6 +1050,9 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
     recent_fills = _recent_rows(fills)
     latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
     held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
+    current_sentiment = _sentiment_snapshot(latest_decision)
+    headline_preview = _headline_evidence_preview(latest_decision)
+    sentiment_trend = _sentiment_trend(decisions)
     broker_rejection_count = 0
     for frame in (decisions, fills):
         if frame.empty:
@@ -838,6 +1079,25 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "last_fill_utc": latest_fill.timestamp or "",
         "heartbeat_age_minutes": instance.status.age_minutes,
         "broker_rejection_count": broker_rejection_count,
+        "sentiment_label": current_sentiment.label,
+        "sentiment_probability": current_sentiment.probability,
+        "sentiment_source": current_sentiment.source,
+        "sentiment_availability_state": current_sentiment.availability_state,
+        "sentiment_is_fallback": current_sentiment.is_fallback,
+        "sentiment_is_stale": current_sentiment.is_stale,
+        "sentiment_last_updated_utc": current_sentiment.observed_at,
+        "sentiment_state_message": current_sentiment.message,
+        "headline_count": headline_preview.headline_count,
+        "headline_preview": list(headline_preview.headlines),
+        "sentiment_trend": [_sentiment_trend_to_dict(entry) for entry in sentiment_trend],
+        "sentiment_headline_source_window": {
+            "source": headline_preview.source,
+            "window_start": headline_preview.window_start,
+            "window_end": headline_preview.window_end,
+            "is_stale": headline_preview.is_stale,
+        },
+        "sentiment_snapshot": _sentiment_snapshot_to_dict(current_sentiment),
+        "headline_preview_detail": _headline_preview_to_dict(headline_preview),
         "evidence_scope": instance.evidence_scope,
         "historical_issue_count": len(instance.historical_issues),
         "historical_issues": [_issue_to_dict(issue) for issue in instance.historical_issues],

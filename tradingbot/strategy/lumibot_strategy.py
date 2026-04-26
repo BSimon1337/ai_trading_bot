@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 from datetime import date
 from decimal import Decimal
@@ -14,8 +15,9 @@ from lumibot.strategies.strategy import Strategy
 from pandas import Timedelta
 
 from tradingbot.data.news import DataHandler
+from tradingbot.execution.logging import DECISION_HEADERS, FILL_HEADERS, SNAPSHOT_HEADERS
 from tradingbot.risk.sizing import RiskLimits, RiskManager
-from tradingbot.sentiment.scoring import estimate_sentiment, score_headlines
+from tradingbot.sentiment.scoring import estimate_sentiment, score_headlines, sentiment_availability_state
 from tradingbot.strategy.signals import choose_trade_action
 
 LOGGER = logging.getLogger(__name__)
@@ -148,59 +150,38 @@ class SentimentMLStrategy(Strategy):
 
     def _ensure_csv_file(self, path: Path, headers: list[str]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
+        if not path.exists():
+            with path.open("w", newline="", encoding="utf-8") as fp:
+                writer = csv.DictWriter(fp, fieldnames=headers)
+                writer.writeheader()
             return
+
+        with path.open("r", newline="", encoding="utf-8") as fp:
+            reader = csv.DictReader(fp)
+            existing_headers = reader.fieldnames or []
+            if existing_headers == headers:
+                return
+            rows = list(reader)
+
         with path.open("w", newline="", encoding="utf-8") as fp:
             writer = csv.DictWriter(fp, fieldnames=headers)
             writer.writeheader()
+            for row in rows:
+                writer.writerow({header: row.get(header, "") for header in headers})
 
     def _ensure_log_files(self) -> None:
         self._ensure_csv_file(
             self.decision_log_path,
-            [
-                "timestamp",
-                "mode",
-                "symbol",
-                "asset_class",
-                "action",
-                "action_source",
-                "model_prob_up",
-                "sentiment_source",
-                "sentiment_probability",
-                "sentiment_label",
-                "quantity",
-                "portfolio_value",
-                "cash",
-                "reason",
-                "result",
-            ],
+            DECISION_HEADERS,
         )
-        self._ensure_csv_file(
-            self.fill_log_path,
-            [
-                "timestamp",
-                "mode",
-                "symbol",
-                "asset_class",
-                "side",
-                "quantity",
-                "order_id",
-                "portfolio_value",
-                "cash",
-                "notional_usd",
-                "result",
-            ],
-        )
-        self._ensure_csv_file(
-            self.daily_snapshot_path,
-            ["date", "mode", "symbol", "portfolio_value", "cash", "position_qty", "day_pnl"],
-        )
+        self._ensure_csv_file(self.fill_log_path, FILL_HEADERS)
+        self._ensure_csv_file(self.daily_snapshot_path, SNAPSHOT_HEADERS)
 
     @staticmethod
-    def _append_csv(path: Path, row: dict) -> None:
+    def _append_csv(path: Path, row: dict, headers: list[str]) -> None:
         with path.open("a", newline="", encoding="utf-8") as fp:
-            writer = csv.DictWriter(fp, fieldnames=list(row.keys()))
-            writer.writerow(row)
+            writer = csv.DictWriter(fp, fieldnames=headers)
+            writer.writerow({header: row.get(header, "") for header in headers})
 
     def _current_position_qty(self) -> float:
         trade_asset = self._trade_asset()
@@ -266,6 +247,7 @@ class SentimentMLStrategy(Strategy):
                 "position_qty": round(self._current_position_qty(), 6),
                 "day_pnl": round(current - float(anchor), 6),
             },
+            SNAPSHOT_HEADERS,
         )
 
     def _get_news_window(self) -> tuple[str, str]:
@@ -282,6 +264,44 @@ class SentimentMLStrategy(Strategy):
         )
         probability, sentiment = estimate_sentiment(headlines)
         return float(probability), str(sentiment)
+
+    def _sentiment_runtime_evidence(
+        self,
+        *,
+        sentiment_probability: float | None,
+        sentiment_label: str | None,
+        sentiment_source: str | None,
+    ) -> dict[str, object]:
+        headline_preview = list(getattr(self.data_handler, "last_headline_preview", []) or [])
+        headline_preview_records = list(getattr(self.data_handler, "last_headline_preview_records", []) or [])
+        headline_count = int(getattr(self.data_handler, "last_headline_count", len(headline_preview)) or 0)
+        source = str(sentiment_source or "")
+        label = str(sentiment_label or "")
+        probability = None if sentiment_probability is None else float(sentiment_probability)
+        if source == "neutral_fallback":
+            availability_state = "neutral_fallback"
+        else:
+            availability_state = sentiment_availability_state(
+                source=source,
+                label=label,
+                headline_count=headline_count,
+            )
+
+        return {
+            "sentiment_source": source,
+            "sentiment_probability": "" if probability is None else round(probability, 6),
+            "sentiment_label": label,
+            "sentiment_availability_state": availability_state,
+            "sentiment_is_fallback": str(source == "neutral_fallback").lower(),
+            "sentiment_observed_at": getattr(self.data_handler, "last_news_observed_at", "") or self.get_datetime().isoformat(),
+            "headline_count": headline_count,
+            "headline_preview": json.dumps(
+                headline_preview if headline_preview else [record.get("headline", "") for record in headline_preview_records],
+                ensure_ascii=True,
+            ),
+            "sentiment_window_start": getattr(self.data_handler, "last_news_window_start", ""),
+            "sentiment_window_end": getattr(self.data_handler, "last_news_window_end", ""),
+        }
 
     def _get_sentiment_features(self) -> tuple[float, int]:
         today, prior = self._get_news_window()
@@ -542,6 +562,7 @@ class SentimentMLStrategy(Strategy):
                 "notional_usd": round(order_notional, 6),
                 "result": "submitted",
             },
+            FILL_HEADERS,
         )
         return {"executed": True, "reason": "submitted", "quantity": float(delta_qty), "order_id": order_id}
 
@@ -566,32 +587,40 @@ class SentimentMLStrategy(Strategy):
         sentiment_source: str | None,
         quantity: float,
         reason: str,
+        sentiment_evidence: dict[str, object] | None = None,
     ) -> None:
         normalized_quantity: float | int = round(float(quantity), 8)
         if not self.is_crypto:
             normalized_quantity = int(quantity)
-        self._append_csv(
-            self.decision_log_path,
-            {
-                "timestamp": self.get_datetime().isoformat(),
-                "mode": self.mode,
-                "symbol": self.symbol,
-                "asset_class": self.asset_class,
-                "action": action,
-                "action_source": action_source,
-                "model_prob_up": "" if model_prob_up is None else round(model_prob_up, 6),
-                "sentiment_source": "" if sentiment_source is None else sentiment_source,
-                "sentiment_probability": ""
-                if sentiment_probability is None
-                else round(float(sentiment_probability), 6),
-                "sentiment_label": "" if sentiment_label is None else sentiment_label,
-                "quantity": normalized_quantity,
-                "portfolio_value": round(self._get_portfolio_value(), 6),
-                "cash": round(float(self.get_cash()), 6),
-                "reason": reason,
-                "result": "submitted" if quantity > 0 and action in {"buy", "sell"} else "blocked" if action == "hold" and reason.endswith("blocked") else "skipped",
-            },
-        )
+        row = {
+            "timestamp": self.get_datetime().isoformat(),
+            "mode": self.mode,
+            "symbol": self.symbol,
+            "asset_class": self.asset_class,
+            "action": action,
+            "action_source": action_source,
+            "model_prob_up": "" if model_prob_up is None else round(model_prob_up, 6),
+            "sentiment_source": "" if sentiment_source is None else sentiment_source,
+            "sentiment_probability": ""
+            if sentiment_probability is None
+            else round(float(sentiment_probability), 6),
+            "sentiment_label": "" if sentiment_label is None else sentiment_label,
+            "sentiment_availability_state": "",
+            "sentiment_is_fallback": "",
+            "sentiment_observed_at": "",
+            "headline_count": "",
+            "headline_preview": "",
+            "sentiment_window_start": "",
+            "sentiment_window_end": "",
+            "quantity": normalized_quantity,
+            "portfolio_value": round(self._get_portfolio_value(), 6),
+            "cash": round(float(self.get_cash()), 6),
+            "reason": reason,
+            "result": "submitted" if quantity > 0 and action in {"buy", "sell"} else "blocked" if action == "hold" and reason.endswith("blocked") else "skipped",
+        }
+        if sentiment_evidence:
+            row.update(sentiment_evidence)
+        self._append_csv(self.decision_log_path, row, DECISION_HEADERS)
 
     def on_trading_iteration(self):
         self._reset_day_anchor_if_needed()
@@ -636,9 +665,24 @@ class SentimentMLStrategy(Strategy):
 
         probability, sentiment = self._get_sentiment()
         sentiment_source = getattr(self.data_handler, "last_news_source", "external")
+        sentiment_evidence = self._sentiment_runtime_evidence(
+            sentiment_probability=probability,
+            sentiment_label=sentiment,
+            sentiment_source=sentiment_source,
+        )
         model_signal, model_prob_up = self._get_model_signal()
         if self._is_market_data_stale():
-            self._log_decision("hold", "guardrail", model_prob_up, probability, sentiment, sentiment_source, 0, "stale_market_data")
+            self._log_decision(
+                "hold",
+                "guardrail",
+                model_prob_up,
+                probability,
+                sentiment,
+                sentiment_source,
+                0,
+                "stale_market_data",
+                sentiment_evidence=sentiment_evidence,
+            )
             return
         decision = choose_trade_action(
             model_signal=model_signal,
@@ -658,6 +702,7 @@ class SentimentMLStrategy(Strategy):
                 sentiment_source,
                 float(result.get("quantity", 0.0)),
                 result.get("reason", ""),
+                sentiment_evidence=sentiment_evidence,
             )
             return
 
@@ -670,6 +715,7 @@ class SentimentMLStrategy(Strategy):
             sentiment_source,
             0,
             decision.reason,
+            sentiment_evidence=sentiment_evidence,
         )
 
     def _dump_benchmark_stats(self):

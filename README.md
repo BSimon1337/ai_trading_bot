@@ -146,6 +146,9 @@ What the refined monitor now shows:
 - separate `Issues` and `Notes` sections
 - last decision time, last fill time, and broker rejection count per bot
 - bounded `Historical Context` so archived or older failed evidence stays visible without overriding current state
+- current per-symbol sentiment label, confidence, source, and fallback state
+- bounded recent headline previews and short sentiment trend history per symbol
+- stale and no-headline sentiment explanations without changing the monitor's read-only behavior
 
 Recommended monitor startup for your current multi-crypto setup:
 

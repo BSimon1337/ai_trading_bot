@@ -52,6 +52,27 @@ def estimate_sentiment(news):
         return 0, labels[-1]
 
 
+def sentiment_availability_state(
+    *,
+    source: str,
+    label: str,
+    headline_count: int,
+) -> str:
+    normalized_source = str(source or "").strip().lower()
+    normalized_label = str(label or "").strip().lower()
+    if normalized_source == "neutral_fallback":
+        return "neutral_fallback"
+    if normalized_source == "local_fixture":
+        return "local_fixture_scored" if normalized_label else "local_fixture_unavailable"
+    if headline_count <= 0:
+        return "no_headlines"
+    if normalized_source == "external" and normalized_label:
+        return "news_scored"
+    if normalized_label:
+        return "scored"
+    return "unavailable"
+
+
 def score_headline(headline: str) -> float:
     if not headline:
         return 0.0
