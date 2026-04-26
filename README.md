@@ -139,12 +139,42 @@ Stopping the monitor:
 
 The monitor remains read-only. It does not place, approve, cancel, or modify trades.
 
+What the refined monitor now shows:
+
+- one authoritative account overview per refresh
+- per-symbol held quantity and held-value estimate
+- separate `Issues` and `Notes` sections
+- last decision time, last fill time, and broker rejection count per bot
+- bounded `Historical Context` so archived or older failed evidence stays visible without overriding current state
+
+Recommended monitor startup for your current multi-crypto setup:
+
+```powershell
+cd C:\Users\Beau\ai_trading_bot
+.\.venv\Scripts\Activate.ps1
+$Host.UI.RawUI.WindowTitle = "AI Trading Bot - Monitor"
+
+$env:SYMBOLS="BTC/USD,ETH/USD,SOL/USD,DOGE/USD"
+$env:CRYPTO_SYMBOLS=""
+$env:ALPACA_CRYPTO_UNIVERSE="none"
+
+tradingbot-monitor --no-tray --host 127.0.0.1 --port 8080
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080
+```
+
 Monitor troubleshooting:
 
 - Blank browser page: confirm you launched from the repo root or used `tradingbot-monitor`, then open the exact host and port you passed on the command line.
 - Wrong working directory: run `cd C:\Users\Beau\ai_trading_bot` before `python monitor_app.py` or module-style commands so templates and local logs resolve correctly.
 - Missing logs: the monitor still starts, but it will show `no_data` or warning states until runtime evidence exists under the expected `logs/paper_validation*` paths.
 - Tray unavailable: use `tradingbot-monitor --no-tray` to keep the dashboard usable if `pystray` cannot attach to the local desktop session.
+- Historical noise still showing up as current: move older evidence into folders named like `archived`, `history`, or `old`, or set `MONITOR_ARCHIVE_MARKERS` to match your retention folder names.
+- Current evidence feeling too old or too aggressive: tune `MONITOR_STALE_AFTER_MINUTES` and `MONITOR_HISTORICAL_ISSUE_LIMIT` for your local workflow.
 
 Generated runtime evidence:
 

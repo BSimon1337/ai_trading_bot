@@ -15,7 +15,12 @@ from tradingbot.config.settings import BotConfig, infer_asset_class
 
 DEFAULT_REFRESH_SECONDS = 15
 DEFAULT_STALE_AFTER_MINUTES = 180
+DEFAULT_HISTORY_ISSUE_LIMIT = 5
+DEFAULT_ARCHIVE_MARKERS = ("archive", "archived", "history", "historical", "old", "retained")
 SENSITIVE_KEYWORDS = ("key", "secret", "token", "password", "credential")
+VALUE_SOURCE_FILL = "latest_fill"
+VALUE_SOURCE_SNAPSHOT_DELTA = "snapshot_delta"
+VALUE_SOURCE_UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,15 @@ class IssueSummary:
 
 
 @dataclass(frozen=True)
+class NoteSummary:
+    timestamp: str
+    symbol: str
+    category: str
+    message: str
+    source: str
+
+
+@dataclass(frozen=True)
 class DashboardInstance:
     label: str
     symbols: tuple[str, ...]
@@ -98,6 +112,9 @@ class DashboardInstance:
     latest_fill: FillSummary | None = None
     latest_snapshot: SnapshotSummary | None = None
     issues: tuple[IssueSummary, ...] = ()
+    notes: tuple[NoteSummary, ...] = ()
+    evidence_scope: str = "active"
+    historical_issues: tuple[IssueSummary, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,6 +122,9 @@ class MonitorConfiguration:
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8080
     refresh_seconds: int = DEFAULT_REFRESH_SECONDS
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES
+    historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT
+    archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS
     tray_enabled: bool = True
     read_only: bool = True
     instances: tuple[DashboardInstance, ...] = ()
@@ -243,12 +263,22 @@ def load_monitor_configuration(
 ) -> MonitorConfiguration:
     refresh_seconds = _safe_int(os.getenv("MONITOR_REFRESH_SECONDS"), DEFAULT_REFRESH_SECONDS)
     dashboard_port = _safe_int(os.getenv("MONITOR_PORT"), 8080)
+    stale_after_minutes = _safe_int(os.getenv("MONITOR_STALE_AFTER_MINUTES"), DEFAULT_STALE_AFTER_MINUTES)
+    historical_issue_limit = _safe_int(os.getenv("MONITOR_HISTORICAL_ISSUE_LIMIT"), DEFAULT_HISTORY_ISSUE_LIMIT)
     dashboard_host = os.getenv("MONITOR_HOST", "127.0.0.1").strip() or "127.0.0.1"
     tray_enabled = os.getenv("MONITOR_TRAY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    archive_markers = tuple(
+        marker.strip().lower()
+        for marker in os.getenv("MONITOR_ARCHIVE_MARKERS", ",".join(DEFAULT_ARCHIVE_MARKERS)).split(",")
+        if marker.strip()
+    ) or DEFAULT_ARCHIVE_MARKERS
     return MonitorConfiguration(
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
         refresh_seconds=refresh_seconds,
+        stale_after_minutes=stale_after_minutes,
+        historical_issue_limit=historical_issue_limit,
+        archive_markers=archive_markers,
         tray_enabled=tray_enabled,
         read_only=True,
         instances=discover_monitor_instances(config=config, symbols=symbols, base_dir=base_dir),
@@ -304,6 +334,16 @@ def _issue_to_dict(issue: IssueSummary) -> dict[str, str]:
     }
 
 
+def _note_to_dict(note: NoteSummary) -> dict[str, str]:
+    return {
+        "timestamp": note.timestamp,
+        "symbol": note.symbol,
+        "category": note.category,
+        "message": note.message,
+        "source": note.source,
+    }
+
+
 def _status_to_dict(status: RuntimeStatus) -> dict[str, Any]:
     return {
         "state": status.state,
@@ -323,6 +363,14 @@ def _sort_issues(issues: list[IssueSummary]) -> list[IssueSummary]:
             issue.category,
             issue.symbol,
         ),
+        reverse=False,
+    )
+
+
+def _sort_notes(notes: list[NoteSummary]) -> list[NoteSummary]:
+    return sorted(
+        notes,
+        key=lambda note: (note.timestamp, note.category, note.symbol),
         reverse=False,
     )
 
@@ -351,6 +399,50 @@ def _normalize_snapshot_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
     return normalized.sort_values("timestamp")
 
 
+def _active_evidence_cutoff(
+    *,
+    reference: datetime | None = None,
+    active_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> pd.Timestamp:
+    reference_utc = reference or datetime.now(timezone.utc)
+    timestamp = pd.Timestamp(reference_utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return timestamp - pd.Timedelta(minutes=active_minutes)
+
+
+def _instance_evidence_scope(
+    instance: DashboardInstance,
+    *,
+    archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
+) -> str:
+    markers = {marker.lower() for marker in archive_markers if marker}
+    if not markers:
+        return "active"
+    for path in (instance.decision_log_path, instance.fill_log_path, instance.snapshot_log_path):
+        parts = [part.lower() for part in Path(path).parts]
+        if any(marker in part for marker in markers for part in parts):
+            return "historical"
+    return "active"
+
+
+def _filter_active_evidence(
+    dataframe: pd.DataFrame,
+    *,
+    column: str = "timestamp",
+    reference: datetime | None = None,
+    active_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> pd.DataFrame:
+    if dataframe.empty or column not in dataframe.columns:
+        return dataframe
+    cutoff = _active_evidence_cutoff(reference=reference, active_minutes=active_minutes)
+    normalized = dataframe.copy()
+    normalized[column] = pd.to_datetime(normalized[column], errors="coerce", utc=True)
+    return normalized[normalized[column].notna() & (normalized[column] >= cutoff)].sort_values(column)
+
+
 def _latest_timestamp(*frames: pd.DataFrame) -> pd.Timestamp | None:
     timestamps: list[pd.Timestamp] = []
     for frame in frames:
@@ -360,6 +452,93 @@ def _latest_timestamp(*frames: pd.DataFrame) -> pd.Timestamp | None:
         if timestamp is not None and pd.notna(timestamp):
             timestamps.append(timestamp)
     return max(timestamps) if timestamps else None
+
+
+def _row_issues(frame: pd.DataFrame, source: str) -> list[IssueSummary]:
+    issues: list[IssueSummary] = []
+    if frame.empty:
+        return issues
+    for row in frame.tail(20).to_dict(orient="records"):
+        reason = str(row.get("reason", ""))
+        result = str(row.get("result", ""))
+        if result in {"failed", "blocked", "rejected", "canceled"} or reason.startswith("broker_"):
+            if result == "blocked":
+                category = "blocked"
+            elif result in {"rejected", "canceled"} or reason.startswith("broker_"):
+                category = "broker_rejection"
+            else:
+                category = result or "broker_issue"
+            issues.append(
+                IssueSummary(
+                    timestamp=_clean_value(row.get("timestamp")) or _utc_now_iso(),
+                    severity="critical" if result in {"failed", "blocked"} else "warning",
+                    symbol=_clean_value(row.get("symbol")) or "SYSTEM",
+                    category=category,
+                    message=reason or result,
+                    source=source,
+                )
+            )
+    return issues
+
+
+def _parse_instance_timestamp(value: str | None) -> pd.Timestamp | None:
+    if not value:
+        return None
+    timestamp = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(timestamp):
+        return None
+    return timestamp
+
+
+def _select_authoritative_account_instance(
+    instances: list[DashboardInstance],
+    *,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+    reference: datetime | None = None,
+) -> DashboardInstance | None:
+    if not instances:
+        return None
+    cutoff = _active_evidence_cutoff(reference=reference, active_minutes=stale_after_minutes)
+    candidates: list[tuple[pd.Timestamp, DashboardInstance]] = []
+    fallback_candidates: list[tuple[pd.Timestamp, DashboardInstance]] = []
+    for instance in instances:
+        snapshot = instance.latest_snapshot
+        snapshot_ts = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
+        last_update_ts = _parse_instance_timestamp(instance.last_updated_at)
+        if snapshot_ts is not None:
+            fallback_candidates.append((snapshot_ts, instance))
+            if snapshot_ts >= cutoff:
+                candidates.append((snapshot_ts, instance))
+        elif last_update_ts is not None:
+            fallback_candidates.append((last_update_ts, instance))
+            if last_update_ts >= cutoff:
+                candidates.append((last_update_ts, instance))
+    ranked = candidates or fallback_candidates
+    if not ranked:
+        return instances[0]
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked[0][1]
+
+
+def _value_evidence(
+    snapshot: SnapshotSummary | None,
+    fill: FillSummary | None,
+) -> tuple[float, float, str]:
+    position_qty = to_float(snapshot.position_qty if snapshot is not None else None)
+    fill_qty = to_float(fill.quantity if fill is not None else None)
+    fill_notional = to_float(fill.notional_usd if fill is not None else None)
+    if fill_qty > 0 and fill_notional > 0:
+        unit_value = fill_notional / fill_qty
+        return unit_value, position_qty * unit_value, VALUE_SOURCE_FILL
+
+    portfolio_value = to_float(snapshot.portfolio_value if snapshot is not None else None)
+    cash = to_float(snapshot.cash if snapshot is not None else None)
+    if position_qty > 0 and portfolio_value >= cash:
+        held_value = max(portfolio_value - cash, 0.0)
+        if held_value > 0:
+            return held_value / position_qty, held_value, VALUE_SOURCE_SNAPSHOT_DELTA
+
+    return 0.0, 0.0, VALUE_SOURCE_UNAVAILABLE
 
 
 def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
@@ -439,9 +618,13 @@ def _issues_from_evidence(
     snapshot: pd.DataFrame,
     age_minutes: float | None,
     stale_after_minutes: int,
+    *,
+    evidence_scope: str = "active",
 ) -> list[IssueSummary]:
-    issues = [result.issue for result in read_results if result.issue is not None]
-    if age_minutes is not None and age_minutes > stale_after_minutes:
+    issues: list[IssueSummary] = []
+    if evidence_scope != "historical":
+        issues.extend(result.issue for result in read_results if result.issue is not None)
+    if evidence_scope != "historical" and age_minutes is not None and age_minutes > stale_after_minutes:
         issues.append(
             IssueSummary(
                 timestamp=_utc_now_iso(),
@@ -453,37 +636,56 @@ def _issues_from_evidence(
             )
         )
     for frame, source in ((decisions, "decisions"), (fills, "fills")):
-        if frame.empty:
-            continue
-        for row in frame.tail(20).to_dict(orient="records"):
-            reason = str(row.get("reason", ""))
-            result = str(row.get("result", ""))
-            if result in {"failed", "blocked", "rejected", "canceled"} or reason.startswith("broker_"):
-                if result == "blocked":
-                    category = "blocked"
-                elif result in {"rejected", "canceled"} or reason.startswith("broker_"):
-                    category = "broker_rejection"
-                else:
-                    category = result or "broker_issue"
-                issues.append(
-                    IssueSummary(
-                        timestamp=_clean_value(row.get("timestamp")) or _utc_now_iso(),
-                        severity="critical" if result in {"failed", "blocked"} else "warning",
-                        symbol=_clean_value(row.get("symbol")) or "SYSTEM",
-                        category=category,
-                        message=reason or result,
-                        source=source,
-                    )
-                )
+        issues.extend(_row_issues(frame, source))
+    return [issue for issue in _sort_issues([issue for issue in issues if issue is not None])]
+
+
+def _historical_issues_from_evidence(
+    read_results: tuple[CsvReadResult, ...],
+    decisions: pd.DataFrame,
+    fills: pd.DataFrame,
+    active_decisions: pd.DataFrame,
+    active_fills: pd.DataFrame,
+    *,
+    evidence_scope: str,
+    historical_issue_limit: int,
+) -> list[IssueSummary]:
+    historical_issues: list[IssueSummary] = []
+    if evidence_scope == "historical":
+        historical_issues.extend(result.issue for result in read_results if result.issue is not None)
+        historical_decisions = decisions
+        historical_fills = fills
+    else:
+        historical_decisions = decisions
+        historical_fills = fills
+        if not active_decisions.empty and "timestamp" in active_decisions.columns:
+            cutoff = active_decisions["timestamp"].min()
+            historical_decisions = decisions[decisions["timestamp"] < cutoff]
+        if not active_fills.empty and "timestamp" in active_fills.columns:
+            cutoff = active_fills["timestamp"].min()
+            historical_fills = fills[fills["timestamp"] < cutoff]
+
+    historical_issues.extend(_row_issues(historical_decisions, "decisions"))
+    historical_issues.extend(_row_issues(historical_fills, "fills"))
+    sorted_issues = _sort_issues([issue for issue in historical_issues if issue is not None])
+    return sorted_issues[:historical_issue_limit]
+
+
+def _notes_from_evidence(
+    decisions: pd.DataFrame,
+    fills: pd.DataFrame,
+    snapshot: pd.DataFrame,
+) -> list[NoteSummary]:
+    del decisions, fills
+    notes: list[NoteSummary] = []
     if not snapshot.empty:
         recent_snapshot = snapshot.tail(5).to_dict(orient="records")
         for row in recent_snapshot:
             day_pnl = to_float(row.get("day_pnl"), 0.0)
             if day_pnl < 0:
-                issues.append(
-                    IssueSummary(
-                        timestamp=_utc_now_iso(),
-                        severity="info",
+                notes.append(
+                    NoteSummary(
+                        timestamp=_clean_value(row.get("timestamp")) or _utc_now_iso(),
                         symbol=_clean_value(row.get("symbol")) or "SYSTEM",
                         category="negative_pnl",
                         message=f"Latest day PnL is negative: {day_pnl:.2f}",
@@ -491,38 +693,72 @@ def _issues_from_evidence(
                     )
                 )
                 break
-    return [issue for issue in _sort_issues([issue for issue in issues if issue is not None])]
+    return _sort_notes(notes)
 
 
 def summarize_instance(
     instance: DashboardInstance,
     *,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+    historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT,
+    archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
 ) -> DashboardInstance:
+    evidence_scope = _instance_evidence_scope(instance, archive_markers=archive_markers)
     decision_result = safe_read_csv(instance.decision_log_path, source="decisions")
     fill_result = safe_read_csv(instance.fill_log_path, source="fills")
     snapshot_result = safe_read_csv(instance.snapshot_log_path, source="snapshot")
     decisions = normalize_timestamps(decision_result.dataframe)
     fills = normalize_timestamps(fill_result.dataframe)
     snapshot = _normalize_snapshot_frame(snapshot_result.dataframe)
+    active_decisions = _filter_active_evidence(decisions, active_minutes=stale_after_minutes)
+    active_fills = _filter_active_evidence(fills, active_minutes=stale_after_minutes)
+    active_snapshot = _filter_active_evidence(snapshot, active_minutes=stale_after_minutes)
 
     latest_decision = (
-        _row_to_summary(decisions.iloc[-1].to_dict(), DecisionSummary) if not decisions.empty else None
+        _row_to_summary(
+            (active_decisions.iloc[-1] if not active_decisions.empty else decisions.iloc[-1]).to_dict(),
+            DecisionSummary,
+        )
+        if not decisions.empty
+        else None
     )
-    latest_fill = _row_to_summary(fills.iloc[-1].to_dict(), FillSummary) if not fills.empty else None
+    latest_fill = (
+        _row_to_summary(
+            (active_fills.iloc[-1] if not active_fills.empty else fills.iloc[-1]).to_dict(),
+            FillSummary,
+        )
+        if not fills.empty
+        else None
+    )
     latest_snapshot = (
-        _row_to_summary(snapshot.iloc[-1].to_dict(), SnapshotSummary) if not snapshot.empty else None
+        _row_to_summary(
+            (active_snapshot.iloc[-1] if not active_snapshot.empty else snapshot.iloc[-1]).to_dict(),
+            SnapshotSummary,
+        )
+        if not snapshot.empty
+        else None
     )
     last_timestamp = _latest_timestamp(decisions, fills)
     age = _age_minutes(last_timestamp)
     issues = _issues_from_evidence(
         (decision_result, fill_result, snapshot_result),
-        decisions,
-        fills,
-        snapshot,
+        active_decisions,
+        active_fills,
+        active_snapshot,
         age,
         stale_after_minutes,
+        evidence_scope=evidence_scope,
     )
+    historical_issues = _historical_issues_from_evidence(
+        (decision_result, fill_result, snapshot_result),
+        decisions,
+        fills,
+        active_decisions,
+        active_fills,
+        evidence_scope=evidence_scope,
+        historical_issue_limit=historical_issue_limit,
+    )
+    notes = _notes_from_evidence(active_decisions, active_fills, active_snapshot)
     status = _classify_status(latest_decision, issues, age, stale_after_minutes)
     return DashboardInstance(
         label=instance.label,
@@ -537,11 +773,15 @@ def summarize_instance(
         latest_fill=latest_fill,
         latest_snapshot=latest_snapshot,
         issues=tuple(issues),
+        notes=tuple(notes),
+        evidence_scope=evidence_scope,
+        historical_issues=tuple(historical_issues),
     )
 
 
 def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
     latest_decision = instance.latest_decision or DecisionSummary()
+    latest_fill = instance.latest_fill or FillSummary()
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
     decisions = normalize_timestamps(safe_read_csv(instance.decision_log_path, source="decisions").dataframe)
     fills = normalize_timestamps(safe_read_csv(instance.fill_log_path, source="fills").dataframe)
@@ -570,6 +810,17 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
             actions_7d[action] = int(counts.get(action, 0))
     recent_decisions = _recent_rows(decisions)
     recent_fills = _recent_rows(fills)
+    latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
+    held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
+    broker_rejection_count = 0
+    for frame in (decisions, fills):
+        if frame.empty:
+            continue
+        for row in frame.to_dict(orient="records"):
+            reason = str(row.get("reason", ""))
+            result = str(row.get("result", ""))
+            if result in {"rejected", "canceled"} or reason.startswith("broker_"):
+                broker_rejection_count += 1
     return {
         "label": instance.label,
         "status": _status_to_dict(instance.status),
@@ -583,10 +834,22 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "latest_asset_class": latest_decision.asset_class or (instance.asset_classes[0] if instance.asset_classes else "unknown"),
         "latest_source": latest_decision.action_source or "n/a",
         "latest_update_utc": instance.last_updated_at,
+        "last_decision_utc": latest_decision.timestamp or "",
+        "last_fill_utc": latest_fill.timestamp or "",
         "heartbeat_age_minutes": instance.status.age_minutes,
+        "broker_rejection_count": broker_rejection_count,
+        "evidence_scope": instance.evidence_scope,
+        "historical_issue_count": len(instance.historical_issues),
+        "historical_issues": [_issue_to_dict(issue) for issue in instance.historical_issues],
+        "account_equity": to_float(latest_snapshot.portfolio_value),
         "portfolio_value": to_float(latest_snapshot.portfolio_value),
+        "cash": to_float(latest_snapshot.cash),
         "day_pnl": to_float(latest_snapshot.day_pnl),
         "position_qty": to_float(latest_snapshot.position_qty),
+        "held_value": held_value,
+        "held_value_estimate": held_value_estimate,
+        "held_value_source": held_value_source,
+        "latest_fill_price": latest_fill_price,
         "decisions_today": decisions_today,
         "fills_today": fills_today,
         "equity_points": equity_points,
@@ -599,12 +862,15 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "recent_fills_columns": list(fills.columns) if not fills.empty else list(FillSummary.__dataclass_fields__.keys()),
         "recent_fills_rows": recent_fills,
         "issues": [_issue_to_dict(issue) for issue in instance.issues],
+        "notes": [_note_to_dict(note) for note in instance.notes],
     }
 
 
 def _aggregate_state(instances: list[DashboardInstance]) -> str:
-    states = {instance.status.state for instance in instances}
-    if not instances:
+    active_instances = [instance for instance in instances if instance.evidence_scope != "historical"]
+    considered = active_instances or instances
+    states = {instance.status.state for instance in considered}
+    if not considered:
         return "no_data"
     for state in ("failed", "blocked", "stale", "no_data"):
         if state in states:
@@ -616,21 +882,107 @@ def _aggregate_state(instances: list[DashboardInstance]) -> str:
     return "running"
 
 
+def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any]:
+    active_instances = [instance for instance in instances if instance.evidence_scope != "historical"]
+    if not active_instances:
+        return {
+            "account_equity": 0.0,
+            "cash": 0.0,
+            "day_pnl": 0.0,
+            "active_instances": 0,
+            "instances_count": 0,
+            "fills_today": 0,
+            "instances_with_fills": 0,
+            "source_instance": "",
+            "latest_update_utc": "",
+            "is_stale": True,
+        }
+
+    freshest = _select_authoritative_account_instance(active_instances)
+    if freshest is None:
+        return {
+            "account_equity": 0.0,
+            "cash": 0.0,
+            "day_pnl": 0.0,
+            "active_instances": len(active_instances),
+            "instances_count": len(active_instances),
+            "fills_today": 0,
+            "instances_with_fills": 0,
+            "source_instance": "",
+            "latest_update_utc": "",
+            "is_stale": True,
+        }
+    snapshot = freshest.latest_snapshot or SnapshotSummary()
+    latest_update = snapshot.timestamp or freshest.last_updated_at or ""
+    latest_update_ts = _parse_instance_timestamp(latest_update)
+    is_stale = True if latest_update_ts is None else (_age_minutes(latest_update_ts) or 0.0) > DEFAULT_STALE_AFTER_MINUTES
+    instances_with_fills = sum(1 for instance in active_instances if instance.latest_fill is not None)
+    return {
+        "account_equity": to_float(snapshot.portfolio_value),
+        "cash": to_float(snapshot.cash),
+        "day_pnl": to_float(snapshot.day_pnl),
+        "active_instances": len(active_instances),
+        "instances_count": len(active_instances),
+        "fills_today": instances_with_fills,
+        "instances_with_fills": instances_with_fills,
+        "source_instance": freshest.label,
+        "latest_update_utc": latest_update,
+        "is_stale": is_stale,
+    }
+
+
+def _build_historical_context(
+    instances: list[DashboardInstance],
+    *,
+    stale_after_minutes: int,
+    historical_issue_limit: int,
+) -> dict[str, Any]:
+    historical_instances = [instance for instance in instances if instance.evidence_scope == "historical"]
+    historical_issues = [issue for instance in instances for issue in instance.historical_issues]
+    return {
+        "active_window_minutes": stale_after_minutes,
+        "historical_issue_limit": historical_issue_limit,
+        "historical_instance_count": len(historical_instances),
+        "historical_issue_count": len(historical_issues),
+        "historical_issues": [_issue_to_dict(issue) for issue in _sort_issues(historical_issues)[:historical_issue_limit]],
+    }
+
+
 def dashboard_status(
     instances: tuple[DashboardInstance, ...] | None = None,
     *,
     config: BotConfig | None = None,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+    historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT,
+    archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
 ) -> dict[str, Any]:
     configured = instances if instances is not None else load_monitor_configuration(config=config).instances
-    summarized = [summarize_instance(instance, stale_after_minutes=stale_after_minutes) for instance in configured]
-    issues = [issue for instance in summarized for issue in instance.issues]
-    recent_activity = _collect_recent_activity(summarized)
+    summarized = [
+        summarize_instance(
+            instance,
+            stale_after_minutes=stale_after_minutes,
+            historical_issue_limit=historical_issue_limit,
+            archive_markers=archive_markers,
+        )
+        for instance in configured
+    ]
+    active_instances = [instance for instance in summarized if instance.evidence_scope != "historical"]
+    display_instances = active_instances or summarized
+    issues = [issue for instance in display_instances for issue in instance.issues]
+    notes = [note for instance in display_instances for note in instance.notes]
+    recent_activity = _collect_recent_activity(display_instances)
     payload = {
         "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "aggregate_state": _aggregate_state(summarized),
-        "instances": [_instance_payload(instance) for instance in summarized],
+        "account_overview": _build_account_overview(summarized),
+        "historical_context": _build_historical_context(
+            summarized,
+            stale_after_minutes=stale_after_minutes,
+            historical_issue_limit=historical_issue_limit,
+        ),
+        "instances": [_instance_payload(instance) for instance in display_instances],
         "issues": [_issue_to_dict(issue) for issue in issues],
+        "notes": [_note_to_dict(note) for note in _sort_notes(notes)],
         "recent_activity_columns": ["timestamp", "instance_label", "mode", "symbol", "action", "action_source", "quantity", "reason", "result"],
         "recent_activity_rows": recent_activity,
     }
@@ -642,12 +994,20 @@ def create_app(
     instances: tuple[DashboardInstance, ...] | None = None,
     config: BotConfig | None = None,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+    historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT,
+    archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
     refresh_seconds: int = DEFAULT_REFRESH_SECONDS,
 ) -> Flask:
     app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[2] / "templates"))
 
     def status_payload() -> dict[str, Any]:
-        return dashboard_status(instances, config=config, stale_after_minutes=stale_after_minutes)
+        return dashboard_status(
+            instances,
+            config=config,
+            stale_after_minutes=stale_after_minutes,
+            historical_issue_limit=historical_issue_limit,
+            archive_markers=archive_markers,
+        )
 
     @app.route("/")
     def dashboard():

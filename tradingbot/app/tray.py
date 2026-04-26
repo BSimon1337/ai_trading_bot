@@ -153,8 +153,12 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     label, summary, _color = TRAY_STATE_META.get(aggregate_state, TRAY_STATE_META["unavailable"])
     instances = payload.get("instances", []) or []
     issues = payload.get("issues", []) or []
+    notes = payload.get("notes", []) or []
+    historical_context = payload.get("historical_context", {}) or {}
     issue_count = len(issues)
+    note_count = len(notes)
     instance_count = len(instances)
+    historical_issue_count = int(historical_context.get("historical_issue_count", 0) or 0)
     critical_count = sum(1 for issue in issues if issue.get("severity") == "critical")
     warning_count = sum(1 for issue in issues if issue.get("severity") == "warning")
     if critical_count:
@@ -163,7 +167,8 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
         issue_summary = f"Warnings: {warning_count}."
     else:
         issue_summary = f"Issues: {issue_count}."
-    tooltip = f"{summary} Instances: {instance_count}. {issue_summary}"
+    historical_summary = f" Historical: {historical_issue_count}." if historical_issue_count else ""
+    tooltip = f"{summary} Instances: {instance_count}. {issue_summary} Notes: {note_count}.{historical_summary}"
     return TrayState(
         label=label,
         state=aggregate_state,

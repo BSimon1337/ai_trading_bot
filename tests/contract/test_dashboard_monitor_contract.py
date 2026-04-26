@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture
 from tradingbot.app.monitor import DashboardInstance, create_app
 
@@ -26,7 +28,27 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
 
     assert status_response.status_code == 200
     payload = status_response.get_json()
-    assert set(payload) >= {"status_updated_utc", "aggregate_state", "instances", "issues", "recent_activity_columns", "recent_activity_rows"}
+    assert set(payload) >= {
+        "status_updated_utc",
+        "aggregate_state",
+        "account_overview",
+        "historical_context",
+        "instances",
+        "issues",
+        "notes",
+        "recent_activity_columns",
+        "recent_activity_rows",
+    }
+    assert set(payload["account_overview"]) >= {
+        "cash",
+        "account_equity",
+        "day_pnl",
+        "source_instance",
+        "latest_update_utc",
+        "instances_count",
+        "instances_with_fills",
+        "is_stale",
+    }
     assert payload["instances"][0]["label"] == "BTC/USD"
     assert set(payload["instances"][0]) >= {
         "status",
@@ -36,12 +58,21 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "latest_mode",
         "latest_asset_class",
         "latest_update_utc",
+        "last_decision_utc",
+        "last_fill_utc",
+        "broker_rejection_count",
+        "evidence_scope",
+        "historical_issue_count",
+        "historical_issues",
         "heartbeat_age_minutes",
         "decisions_today",
         "fills_today",
         "recent_decisions",
         "recent_fills",
         "issues",
+        "notes",
+        "held_value",
+        "held_value_source",
     }
     assert health_response.status_code == 200
     assert health_response.get_json()["ok"] is True
@@ -120,3 +151,71 @@ def test_dashboard_contract_renders_recent_issues_and_critical_states(tmp_path):
     assert "Recent Issues" in page_text
     assert "blocked" in page_text
     assert "malformed_csv" in page_text
+
+
+def test_dashboard_contract_exposes_notes_separately_from_issues(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "no_recent_fill", symbol="BTC/USD")
+    now = datetime.now(timezone.utc)
+    paths["snapshot"].write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                f"{now.isoformat()},live,BTC/USD,99.0,80.0,2.0,-0.5",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert any(note["category"] == "negative_pnl" for note in payload["notes"])
+    assert not any(issue["category"] == "negative_pnl" for issue in payload["issues"])
+    assert "Recent Notes" in page_text
+
+
+def test_dashboard_contract_exposes_active_and_historical_context_separately(tmp_path):
+    current_paths = create_monitor_fixture(tmp_path / "current", "healthy", symbol="BTC/USD")
+    archived_paths = create_monitor_fixture(tmp_path / "history", "archived_failed", symbol="ETH/USD")
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=current_paths["decisions"],
+                fill_log_path=current_paths["fills"],
+                snapshot_log_path=current_paths["snapshot"],
+            ),
+            DashboardInstance(
+                label="ETH/USD-old",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=archived_paths["decisions"],
+                fill_log_path=archived_paths["fills"],
+                snapshot_log_path=archived_paths["snapshot"],
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert payload["aggregate_state"] in {"paper", "running"}
+    assert payload["historical_context"]["historical_instance_count"] == 1
+    assert payload["historical_context"]["historical_issue_count"] >= 1
+    assert "Historical Context" in page_text

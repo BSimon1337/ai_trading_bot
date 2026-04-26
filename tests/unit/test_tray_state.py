@@ -31,6 +31,7 @@ def test_tray_state_mapping_handles_warning_states():
         "aggregate_state": "stale",
         "instances": [{"label": "BTC/USD"}],
         "issues": [{"severity": "warning"}],
+        "notes": [],
     }
 
     state = tray_state_from_dashboard(payload)
@@ -46,6 +47,7 @@ def test_tray_state_mapping_highlights_critical_issue_aggregation():
         "aggregate_state": "failed",
         "instances": [{"label": "BTC/USD"}, {"label": "ETH/USD"}],
         "issues": [{"severity": "critical"}, {"severity": "warning"}, {"severity": "critical"}],
+        "notes": [],
     }
 
     state = tray_state_from_dashboard(payload)
@@ -66,6 +68,7 @@ def test_tray_actions_only_use_monitor_callbacks():
             "aggregate_state": "paper",
             "instances": [{"label": "SPY"}],
             "issues": [],
+            "notes": [],
         }
 
     def browser_opener(url: str):
@@ -88,3 +91,36 @@ def test_tray_actions_only_use_monitor_callbacks():
     assert payload_calls == ["refresh"]
     assert opened_urls == ["http://127.0.0.1:8080/"]
     assert controller.exit_requested is True
+
+
+def test_tray_state_mapping_counts_notes_without_escalating_severity():
+    payload = {
+        "status_updated_utc": "2026-04-19 12:00:00 UTC",
+        "aggregate_state": "live",
+        "instances": [{"label": "BTC/USD"}],
+        "issues": [],
+        "notes": [{"category": "negative_pnl"}],
+        "historical_context": {"historical_issue_count": 0},
+    }
+
+    state = tray_state_from_dashboard(payload)
+
+    assert state.state == "live"
+    assert "Issues: 0." in state.tooltip
+    assert "Notes: 1." in state.tooltip
+
+
+def test_tray_state_mapping_reports_historical_context_without_escalating_state():
+    payload = {
+        "status_updated_utc": "2026-04-19 12:00:00 UTC",
+        "aggregate_state": "live",
+        "instances": [{"label": "BTC/USD"}],
+        "issues": [],
+        "notes": [],
+        "historical_context": {"historical_issue_count": 2},
+    }
+
+    state = tray_state_from_dashboard(payload)
+
+    assert state.state == "live"
+    assert "Historical: 2." in state.tooltip
