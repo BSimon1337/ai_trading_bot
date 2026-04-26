@@ -17,7 +17,7 @@ from pandas import Timedelta
 from tradingbot.data.news import DataHandler
 from tradingbot.execution.logging import DECISION_HEADERS, FILL_HEADERS, SNAPSHOT_HEADERS
 from tradingbot.risk.sizing import RiskLimits, RiskManager
-from tradingbot.sentiment.scoring import estimate_sentiment, score_headlines
+from tradingbot.sentiment.scoring import estimate_sentiment, score_headlines, sentiment_availability_state
 from tradingbot.strategy.signals import choose_trade_action
 
 LOGGER = logging.getLogger(__name__)
@@ -279,16 +279,12 @@ class SentimentMLStrategy(Strategy):
         probability = None if sentiment_probability is None else float(sentiment_probability)
         if source == "neutral_fallback":
             availability_state = "neutral_fallback"
-        elif source == "local_fixture":
-            availability_state = "local_fixture_scored"
-        elif source == "external" and headline_count > 0 and label:
-            availability_state = "news_scored"
-        elif headline_count <= 0:
-            availability_state = "no_headlines"
-        elif label:
-            availability_state = "scored"
         else:
-            availability_state = "unavailable"
+            availability_state = sentiment_availability_state(
+                source=source,
+                label=label,
+                headline_count=headline_count,
+            )
 
         return {
             "sentiment_source": source,

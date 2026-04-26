@@ -12,6 +12,7 @@ import pandas as pd
 from flask import Flask, jsonify, render_template
 
 from tradingbot.config.settings import BotConfig, infer_asset_class
+from tradingbot.sentiment.scoring import sentiment_availability_state
 
 
 DEFAULT_REFRESH_SECONDS = 15
@@ -390,17 +391,11 @@ def _infer_sentiment_availability_state(
 ) -> str:
     if explicit_state:
         return explicit_state
-    if source == "neutral_fallback":
-        return "neutral_fallback"
-    if source == "local_fixture":
-        return "local_fixture_scored" if label else "local_fixture_unavailable"
-    if source == "external" and headline_count > 0 and label:
-        return "news_scored"
-    if headline_count <= 0:
-        return "no_headlines"
-    if label:
-        return "scored"
-    return "unavailable"
+    return sentiment_availability_state(
+        source=source,
+        label=label,
+        headline_count=headline_count,
+    )
 
 
 def _sentiment_snapshot(summary: DecisionSummary | None) -> SentimentSnapshot:
@@ -475,6 +470,41 @@ def _sentiment_trend(
             break
     trend_entries.reverse()
     return tuple(trend_entries)
+
+
+def _sentiment_snapshot_to_dict(snapshot: SentimentSnapshot) -> dict[str, Any]:
+    return {
+        "symbol": snapshot.symbol,
+        "label": snapshot.label,
+        "probability": snapshot.probability,
+        "source": snapshot.source,
+        "availability_state": snapshot.availability_state,
+        "is_fallback": snapshot.is_fallback,
+        "observed_at": snapshot.observed_at,
+        "decision_mode": snapshot.decision_mode,
+    }
+
+
+def _headline_preview_to_dict(preview: HeadlineEvidencePreview) -> dict[str, Any]:
+    return {
+        "symbol": preview.symbol,
+        "headline_count": preview.headline_count,
+        "headlines": list(preview.headlines),
+        "source": preview.source,
+        "window_start": preview.window_start,
+        "window_end": preview.window_end,
+        "is_stale": preview.is_stale,
+    }
+
+
+def _sentiment_trend_to_dict(entry: SentimentTrendEntry) -> dict[str, Any]:
+    return {
+        "timestamp": entry.timestamp,
+        "label": entry.label,
+        "probability": entry.probability,
+        "source": entry.source,
+        "availability_state": entry.availability_state,
+    }
 
 
 def _row_to_summary(row: dict[str, Any], summary_type: type[DecisionSummary] | type[FillSummary] | type[SnapshotSummary]):
@@ -977,6 +1007,9 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
     recent_fills = _recent_rows(fills)
     latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
     held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
+    current_sentiment = _sentiment_snapshot(latest_decision)
+    headline_preview = _headline_evidence_preview(latest_decision)
+    sentiment_trend = _sentiment_trend(decisions)
     broker_rejection_count = 0
     for frame in (decisions, fills):
         if frame.empty:
@@ -1003,6 +1036,23 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "last_fill_utc": latest_fill.timestamp or "",
         "heartbeat_age_minutes": instance.status.age_minutes,
         "broker_rejection_count": broker_rejection_count,
+        "sentiment_label": current_sentiment.label,
+        "sentiment_probability": current_sentiment.probability,
+        "sentiment_source": current_sentiment.source,
+        "sentiment_availability_state": current_sentiment.availability_state,
+        "sentiment_is_fallback": current_sentiment.is_fallback,
+        "sentiment_last_updated_utc": current_sentiment.observed_at,
+        "headline_count": headline_preview.headline_count,
+        "headline_preview": list(headline_preview.headlines),
+        "sentiment_trend": [_sentiment_trend_to_dict(entry) for entry in sentiment_trend],
+        "sentiment_headline_source_window": {
+            "source": headline_preview.source,
+            "window_start": headline_preview.window_start,
+            "window_end": headline_preview.window_end,
+            "is_stale": headline_preview.is_stale,
+        },
+        "sentiment_snapshot": _sentiment_snapshot_to_dict(current_sentiment),
+        "headline_preview_detail": _headline_preview_to_dict(headline_preview),
         "evidence_scope": instance.evidence_scope,
         "historical_issue_count": len(instance.historical_issues),
         "historical_issues": [_issue_to_dict(issue) for issue in instance.historical_issues],

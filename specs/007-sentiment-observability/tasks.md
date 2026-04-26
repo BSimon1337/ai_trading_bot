@@ -48,17 +48,17 @@
 
 ### Tests for User Story 1
 
-- [ ] T010 [P] [US1] Add unit tests for current per-symbol sentiment snapshot extraction in `tests/unit/test_monitor_data.py`
-- [ ] T011 [P] [US1] Add unit tests for fallback-neutral versus real-neutral sentiment state handling in `tests/unit/test_monitor_data.py`
-- [ ] T012 [P] [US1] Add contract tests for per-instance sentiment payload fields in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T010 [P] [US1] Add unit tests for current per-symbol sentiment snapshot extraction in `tests/unit/test_monitor_data.py`
+- [x] T011 [P] [US1] Add unit tests for fallback-neutral versus real-neutral sentiment state handling in `tests/unit/test_monitor_data.py`
+- [x] T012 [P] [US1] Add contract tests for per-instance sentiment payload fields in `tests/contract/test_dashboard_monitor_contract.py`
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Extend sentiment scoring outputs to expose operator-readable availability state in `tradingbot/sentiment/scoring.py`
-- [ ] T014 [US1] Capture current sentiment snapshot fields in runtime evidence from `tradingbot/strategy/lumibot_strategy.py`
-- [ ] T015 [US1] Add per-instance sentiment payload shaping in `tradingbot/app/monitor.py`
-- [ ] T016 [US1] Update summary cards and detail cards to show current sentiment state in `templates/monitor.html`
-- [ ] T017 [US1] Validate User Story 1 by running `tests/unit/test_monitor_data.py` and `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T013 [US1] Extend sentiment scoring outputs to expose operator-readable availability state in `tradingbot/sentiment/scoring.py`
+- [x] T014 [US1] Capture current sentiment snapshot fields in runtime evidence from `tradingbot/strategy/lumibot_strategy.py`
+- [x] T015 [US1] Add per-instance sentiment payload shaping in `tradingbot/app/monitor.py`
+- [x] T016 [US1] Update summary cards and detail cards to show current sentiment state in `templates/monitor.html`
+- [x] T017 [US1] Validate User Story 1 by running `tests/unit/test_monitor_data.py` and `tests/contract/test_dashboard_monitor_contract.py`
 
 **Checkpoint**: The monitor shows trustworthy current sentiment state per symbol.
 

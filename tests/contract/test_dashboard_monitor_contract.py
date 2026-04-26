@@ -73,12 +73,19 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "notes",
         "held_value",
         "held_value_source",
+        "sentiment_label",
+        "sentiment_probability",
+        "sentiment_source",
+        "sentiment_availability_state",
+        "sentiment_is_fallback",
+        "sentiment_last_updated_utc",
     }
     assert health_response.status_code == 200
     assert health_response.get_json()["ok"] is True
     assert page_response.status_code == 200
     assert b"Trading Bot Monitor" in page_response.data
     assert b"Recent Decisions Across Monitored Instances" in page_response.data
+    assert b"Sentiment State" in page_response.data
 
 
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):
