@@ -29,12 +29,12 @@
 
 **Critical**: No user story work should start until sentiment evidence capture and monitor parsing rules are in place.
 
-- [ ] T004 Implement shared sentiment snapshot and availability helpers in `tradingbot/app/monitor.py`
-- [ ] T005 Implement bounded headline-preview and sentiment-trend helper structures in `tradingbot/app/monitor.py`
-- [ ] T006 Add or extend strategy/runtime sentiment evidence capture in `tradingbot/strategy/lumibot_strategy.py`
-- [ ] T007 [P] Extend news-source metadata support for bounded headline evidence in `tradingbot/data/news.py`
-- [ ] T008 [P] Add foundational sentiment fixture builders or fixture coverage in `tests/unit/test_monitor_data.py`
-- [ ] T009 [P] Add foundational unit tests for sentiment snapshot parsing, fallback-state classification, and headline bounding in `tests/unit/test_monitor_data.py`
+- [x] T004 Implement shared sentiment snapshot and availability helpers in `tradingbot/app/monitor.py`
+- [x] T005 Implement bounded headline-preview and sentiment-trend helper structures in `tradingbot/app/monitor.py`
+- [x] T006 Add or extend strategy/runtime sentiment evidence capture in `tradingbot/strategy/lumibot_strategy.py`
+- [x] T007 [P] Extend news-source metadata support for bounded headline evidence in `tradingbot/data/news.py`
+- [x] T008 [P] Add foundational sentiment fixture builders or fixture coverage in `tests/unit/test_monitor_data.py`
+- [x] T009 [P] Add foundational unit tests for sentiment snapshot parsing, fallback-state classification, and headline bounding in `tests/unit/test_monitor_data.py`
 
 **Checkpoint**: Shared sentiment evidence logic is ready for story-specific monitor rendering.
 

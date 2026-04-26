@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,8 @@ SENSITIVE_KEYWORDS = ("key", "secret", "token", "password", "credential")
 VALUE_SOURCE_FILL = "latest_fill"
 VALUE_SOURCE_SNAPSHOT_DELTA = "snapshot_delta"
 VALUE_SOURCE_UNAVAILABLE = "unavailable"
+DEFAULT_HEADLINE_PREVIEW_LIMIT = 3
+DEFAULT_SENTIMENT_TREND_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,13 @@ class DecisionSummary:
     sentiment_source: str = ""
     sentiment_probability: str = ""
     sentiment_label: str = ""
+    sentiment_availability_state: str = ""
+    sentiment_is_fallback: str = ""
+    sentiment_observed_at: str = ""
+    headline_count: str = ""
+    headline_preview: str = ""
+    sentiment_window_start: str = ""
+    sentiment_window_end: str = ""
     quantity: str = ""
     portfolio_value: str = ""
     cash: str = ""
@@ -94,6 +104,38 @@ class NoteSummary:
     category: str
     message: str
     source: str
+
+
+@dataclass(frozen=True)
+class SentimentSnapshot:
+    symbol: str = ""
+    label: str = ""
+    probability: float | None = None
+    source: str = ""
+    availability_state: str = "unavailable"
+    is_fallback: bool = False
+    observed_at: str = ""
+    decision_mode: str = ""
+
+
+@dataclass(frozen=True)
+class HeadlineEvidencePreview:
+    symbol: str = ""
+    headline_count: int = 0
+    headlines: tuple[str, ...] = ()
+    source: str = ""
+    window_start: str = ""
+    window_end: str = ""
+    is_stale: bool = False
+
+
+@dataclass(frozen=True)
+class SentimentTrendEntry:
+    timestamp: str = ""
+    label: str = ""
+    probability: float | None = None
+    source: str = ""
+    availability_state: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -212,6 +254,14 @@ def to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def to_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def sanitize_symbol_for_path(symbol: str) -> str:
     normalized = symbol.strip().lower()
     return re.sub(r"[^a-z0-9]+", "", normalized)
@@ -310,6 +360,121 @@ def _clean_value(value: Any) -> str:
     except (TypeError, ValueError):
         pass
     return str(value)
+
+
+def _parse_headline_preview(value: Any, limit: int = DEFAULT_HEADLINE_PREVIEW_LIMIT) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, list):
+        headlines = [str(item).strip() for item in value if str(item).strip()]
+        return tuple(headlines[:limit])
+    text = str(value).strip()
+    if not text:
+        return ()
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = [text]
+    if isinstance(parsed, list):
+        headlines = [str(item).strip() for item in parsed if str(item).strip()]
+        return tuple(headlines[:limit])
+    parsed_text = str(parsed).strip()
+    return (parsed_text,) if parsed_text else ()
+
+
+def _infer_sentiment_availability_state(
+    source: str,
+    label: str,
+    headline_count: int,
+    explicit_state: str = "",
+) -> str:
+    if explicit_state:
+        return explicit_state
+    if source == "neutral_fallback":
+        return "neutral_fallback"
+    if source == "local_fixture":
+        return "local_fixture_scored" if label else "local_fixture_unavailable"
+    if source == "external" and headline_count > 0 and label:
+        return "news_scored"
+    if headline_count <= 0:
+        return "no_headlines"
+    if label:
+        return "scored"
+    return "unavailable"
+
+
+def _sentiment_snapshot(summary: DecisionSummary | None) -> SentimentSnapshot:
+    if summary is None:
+        return SentimentSnapshot()
+    probability = None
+    if summary.sentiment_probability:
+        probability = to_float(summary.sentiment_probability, default=0.0)
+    headline_count = to_int(summary.headline_count, default=0)
+    availability_state = _infer_sentiment_availability_state(
+        summary.sentiment_source,
+        summary.sentiment_label,
+        headline_count,
+        summary.sentiment_availability_state,
+    )
+    return SentimentSnapshot(
+        symbol=summary.symbol,
+        label=summary.sentiment_label,
+        probability=probability,
+        source=summary.sentiment_source,
+        availability_state=availability_state,
+        is_fallback=to_bool(summary.sentiment_is_fallback, default=summary.sentiment_source == "neutral_fallback"),
+        observed_at=summary.sentiment_observed_at or summary.timestamp,
+        decision_mode=summary.mode,
+    )
+
+
+def _headline_evidence_preview(
+    summary: DecisionSummary | None,
+    *,
+    preview_limit: int = DEFAULT_HEADLINE_PREVIEW_LIMIT,
+) -> HeadlineEvidencePreview:
+    if summary is None:
+        return HeadlineEvidencePreview()
+    headlines = _parse_headline_preview(summary.headline_preview, limit=preview_limit)
+    headline_count = to_int(summary.headline_count, default=len(headlines))
+    return HeadlineEvidencePreview(
+        symbol=summary.symbol,
+        headline_count=headline_count,
+        headlines=headlines,
+        source=summary.sentiment_source,
+        window_start=summary.sentiment_window_start,
+        window_end=summary.sentiment_window_end,
+        is_stale=False,
+    )
+
+
+def _sentiment_trend(
+    decisions: pd.DataFrame,
+    *,
+    limit: int = DEFAULT_SENTIMENT_TREND_LIMIT,
+) -> tuple[SentimentTrendEntry, ...]:
+    if decisions.empty:
+        return ()
+    trend_entries: list[SentimentTrendEntry] = []
+    recent = decisions.tail(limit * 3).to_dict(orient="records")
+    for row in reversed(recent):
+        summary = _row_to_summary(row, DecisionSummary)
+        snapshot = _sentiment_snapshot(summary)
+        if not snapshot.label and snapshot.availability_state == "unavailable":
+            continue
+        trend_entries.append(
+            SentimentTrendEntry(
+                timestamp=summary.timestamp,
+                label=snapshot.label,
+                probability=snapshot.probability,
+                source=snapshot.source,
+                availability_state=snapshot.availability_state,
+            )
+        )
+        if len(trend_entries) >= limit:
+            break
+    trend_entries.reverse()
+    return tuple(trend_entries)
 
 
 def _row_to_summary(row: dict[str, Any], summary_type: type[DecisionSummary] | type[FillSummary] | type[SnapshotSummary]):

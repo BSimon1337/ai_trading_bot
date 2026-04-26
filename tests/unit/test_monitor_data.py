@@ -8,10 +8,15 @@ import pandas as pd
 from tests.conftest import make_bot_config
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, recent_decision, write_decisions, write_malformed_csv
 from tradingbot.app.monitor import (
+    DEFAULT_HEADLINE_PREVIEW_LIMIT,
     VALUE_SOURCE_SNAPSHOT_DELTA,
     _filter_active_evidence,
+    _headline_evidence_preview,
     _select_authoritative_account_instance,
+    _sentiment_snapshot,
+    _sentiment_trend,
     _value_evidence,
+    DecisionSummary,
     DashboardInstance,
     SnapshotSummary,
     discover_monitor_instances,
@@ -25,6 +30,28 @@ from tradingbot.app.monitor import (
     to_float,
     to_int,
 )
+
+
+def _sentiment_row(
+    symbol: str = "BTC/USD",
+    **overrides,
+) -> dict[str, object]:
+    row = recent_decision(
+        symbol=symbol,
+        mode="live",
+        sentiment_source="external",
+        sentiment_probability="0.82",
+        sentiment_label="positive",
+        sentiment_availability_state="news_scored",
+        sentiment_is_fallback="false",
+        sentiment_observed_at=datetime.now(timezone.utc).isoformat(),
+        headline_count="4",
+        headline_preview='["BTC rallies on ETF optimism","Fed cools rate fears","Crypto volumes rise","Institutions return"]',
+        sentiment_window_start="2026-04-23",
+        sentiment_window_end="2026-04-26",
+    )
+    row.update(overrides)
+    return row
 
 
 def test_safe_read_csv_returns_empty_frame_and_issue_for_missing_file(tmp_path):
@@ -73,6 +100,82 @@ def test_numeric_helpers_use_defaults_for_bad_values():
     assert to_float("nope", default=7.0) == 7.0
     assert to_int("3") == 3
     assert to_int("nope", default=9) == 9
+
+
+def test_sentiment_snapshot_parses_current_runtime_evidence_fields():
+    summary = DecisionSummary(**_sentiment_row())
+
+    snapshot = _sentiment_snapshot(summary)
+
+    assert snapshot.symbol == "BTC/USD"
+    assert snapshot.label == "positive"
+    assert snapshot.probability == 0.82
+    assert snapshot.source == "external"
+    assert snapshot.availability_state == "news_scored"
+    assert snapshot.is_fallback is False
+    assert snapshot.observed_at
+
+
+def test_sentiment_snapshot_distinguishes_fallback_neutral_from_real_neutral():
+    fallback_summary = DecisionSummary(
+        **_sentiment_row(
+            sentiment_source="neutral_fallback",
+            sentiment_probability="0.0",
+            sentiment_label="neutral",
+            sentiment_availability_state="",
+            sentiment_is_fallback="true",
+            headline_count="0",
+            headline_preview="[]",
+        )
+    )
+    real_neutral_summary = DecisionSummary(
+        **_sentiment_row(
+            sentiment_source="external",
+            sentiment_probability="0.61",
+            sentiment_label="neutral",
+            sentiment_availability_state="",
+            sentiment_is_fallback="false",
+            headline_count="2",
+            headline_preview='["Calmer CPI data","Large caps steady"]',
+        )
+    )
+
+    fallback = _sentiment_snapshot(fallback_summary)
+    real_neutral = _sentiment_snapshot(real_neutral_summary)
+
+    assert fallback.availability_state == "neutral_fallback"
+    assert fallback.is_fallback is True
+    assert real_neutral.availability_state == "news_scored"
+    assert real_neutral.is_fallback is False
+
+
+def test_headline_evidence_preview_is_bounded_for_dashboard_display():
+    summary = DecisionSummary(**_sentiment_row())
+
+    preview = _headline_evidence_preview(summary)
+
+    assert preview.headline_count == 4
+    assert len(preview.headlines) == DEFAULT_HEADLINE_PREVIEW_LIMIT
+    assert preview.headlines[0] == "BTC rallies on ETF optimism"
+    assert preview.window_start == "2026-04-23"
+    assert preview.window_end == "2026-04-26"
+
+
+def test_sentiment_trend_helper_returns_recent_bounded_entries():
+    frame = pd.DataFrame(
+        [
+            _sentiment_row(timestamp="2026-04-26T12:00:00+00:00", sentiment_label="negative", sentiment_probability="0.71"),
+            _sentiment_row(timestamp="2026-04-26T12:15:00+00:00", sentiment_label="neutral", sentiment_probability="0.55"),
+            _sentiment_row(timestamp="2026-04-26T12:30:00+00:00", sentiment_label="positive", sentiment_probability="0.83"),
+        ]
+    )
+
+    trend = _sentiment_trend(frame, limit=2)
+
+    assert len(trend) == 2
+    assert trend[0].label == "neutral"
+    assert trend[1].label == "positive"
+    assert trend[1].availability_state == "news_scored"
 
 
 def test_redact_sensitive_values_recurses_without_changing_safe_values():
