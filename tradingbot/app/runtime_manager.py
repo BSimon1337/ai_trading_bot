@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -11,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from tradingbot.config.settings import BotConfig, infer_asset_class
+from tradingbot.execution.safeguards import RuntimeGuardrailError, resolve_runtime_state
 
 
 RUNTIME_REGISTRY_VERSION = 1
@@ -92,6 +94,29 @@ class RuntimeStartResult:
     session: RuntimeSession
 
 
+@dataclass(frozen=True)
+class RuntimeStopResult:
+    symbol: str
+    previous_session_id: str
+    runtime_state: str
+    stopped_at_utc: str
+    status_message: str
+    runtime: ManagedRuntime
+    session: RuntimeSession | None
+
+
+@dataclass(frozen=True)
+class RuntimeRestartResult:
+    symbol: str
+    old_session_id: str
+    new_session_id: str
+    runtime_state: str
+    started_at_utc: str
+    status_message: str
+    runtime: ManagedRuntime
+    session: RuntimeSession
+
+
 def _coerce_sequence(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
@@ -118,6 +143,10 @@ def symbol_log_scope(symbol: str, *, base_dir: Path = Path("logs")) -> RuntimeLo
 def create_runtime_session_id(symbol: str) -> str:
     slug = _sanitize_symbol_for_path(symbol) or "symbol"
     return f"{slug}-{uuid4().hex[:12]}"
+
+
+def _terminate_process(pid: int) -> None:
+    os.kill(pid, signal.SIGTERM)
 
 
 def _runtime_from_dict(value: dict[str, Any]) -> ManagedRuntime:
@@ -269,6 +298,20 @@ def lifecycle_event_index(registry: RuntimeRegistry) -> dict[str, LifecycleEvent
     return latest
 
 
+def current_runtime_for_symbol(registry: RuntimeRegistry, symbol: str) -> ManagedRuntime | None:
+    for runtime in registry.managed_runtimes:
+        if runtime.symbol == symbol:
+            return runtime
+    return None
+
+
+def current_session_for_runtime(registry: RuntimeRegistry, runtime: ManagedRuntime) -> RuntimeSession | None:
+    for session in reversed(registry.recent_sessions):
+        if session.session_id == runtime.session_id:
+            return session
+    return None
+
+
 def build_symbol_runtime_config(config: BotConfig, symbol: str) -> BotConfig:
     log_scope = symbol_log_scope(symbol)
     return BotConfig(
@@ -334,28 +377,85 @@ def start_managed_runtime(
     popen_factory: Any = subprocess.Popen,
     cwd: Path | None = None,
     python_executable: str | None = None,
+    was_manual_recovery: bool = False,
 ) -> RuntimeStartResult:
     registry_file = Path(registry_path or config.runtime_registry_path)
     registry = load_runtime_registry(registry_file)
     started_at = utc_now_iso()
     session_id = create_runtime_session_id(symbol)
+    try:
+        runtime_state = resolve_runtime_state(config, mode)
+    except RuntimeGuardrailError as exc:
+        command = build_runtime_launch_command(python_executable=python_executable, mode=mode)
+        environment, launch_env_scope, log_scope = build_runtime_launch_env(config, symbol)
+        failed_session = RuntimeSession(
+            session_id=session_id,
+            symbol=symbol,
+            mode=mode,
+            launch_command=command,
+            launch_env_scope=launch_env_scope,
+            started_at_utc=started_at,
+            ended_at_utc=started_at,
+            end_reason="guardrail_blocked",
+            was_live_mode=False,
+            was_manual_recovery=was_manual_recovery,
+        )
+        failed_runtime = ManagedRuntime(
+            symbol=symbol,
+            instance_label=symbol,
+            mode=mode,
+            lifecycle_state="failed",
+            session_id=session_id,
+            started_at_utc=started_at,
+            last_seen_utc=started_at,
+            failure_reason=str(exc),
+            decision_log_path=log_scope.decision_log_path,
+            fill_log_path=log_scope.fill_log_path,
+            snapshot_log_path=log_scope.snapshot_log_path,
+        )
+        registry = add_runtime_session(registry, failed_session, recent_limit=config.runtime_recent_sessions_limit)
+        registry = register_managed_runtime(
+            registry,
+            failed_runtime,
+            event=LifecycleEvent(
+                timestamp_utc=started_at,
+                symbol=symbol,
+                session_id=session_id,
+                event_type="failed",
+                message=str(exc),
+                source="runtime_manager",
+            ),
+        )
+        save_runtime_registry(registry_file, registry)
+        return RuntimeStartResult(
+            symbol=symbol,
+            session_id=session_id,
+            runtime_state="failed",
+            started_at_utc=started_at,
+            pid=None,
+            status_message=str(exc),
+            runtime=failed_runtime,
+            session=failed_session,
+        )
+
+    actual_mode = runtime_state.execution_mode
     command = build_runtime_launch_command(python_executable=python_executable, mode=mode)
     environment, launch_env_scope, log_scope = build_runtime_launch_env(config, symbol)
 
     session = RuntimeSession(
         session_id=session_id,
         symbol=symbol,
-        mode=mode,
+        mode=actual_mode,
         launch_command=command,
         launch_env_scope=launch_env_scope,
         started_at_utc=started_at,
-        was_live_mode=not config.paper,
-        was_manual_recovery=False,
+        was_live_mode=actual_mode == "live",
+        was_manual_recovery=was_manual_recovery,
     )
     starting_runtime = ManagedRuntime(
         symbol=symbol,
         instance_label=symbol,
-        mode=mode,
+        mode=actual_mode,
         lifecycle_state="starting",
         session_id=session_id,
         started_at_utc=started_at,
@@ -482,4 +582,258 @@ def start_managed_runtimes(
             python_executable=python_executable,
         )
         for symbol in symbols
+    )
+
+
+def stop_managed_runtime(
+    config: BotConfig,
+    symbol: str,
+    *,
+    registry_path: Path | None = None,
+    terminate_process: Any = _terminate_process,
+    stop_reason: str = "operator_stop",
+    status_message: str = "Runtime stopped by operator.",
+) -> RuntimeStopResult:
+    registry_file = Path(registry_path or config.runtime_registry_path)
+    registry = load_runtime_registry(registry_file)
+    runtime = current_runtime_for_symbol(registry, symbol)
+    stopped_at = utc_now_iso()
+    log_scope = symbol_log_scope(symbol)
+
+    if runtime is None:
+        stopped_runtime = ManagedRuntime(
+            symbol=symbol,
+            instance_label=symbol,
+            mode="live",
+            lifecycle_state="stopped",
+            session_id="",
+            started_at_utc="",
+            last_seen_utc=stopped_at,
+            stop_requested_at_utc=stopped_at,
+            decision_log_path=log_scope.decision_log_path,
+            fill_log_path=log_scope.fill_log_path,
+            snapshot_log_path=log_scope.snapshot_log_path,
+        )
+        registry = register_managed_runtime(
+            registry,
+            stopped_runtime,
+            event=LifecycleEvent(
+                timestamp_utc=stopped_at,
+                symbol=symbol,
+                session_id="",
+                event_type="stopped",
+                message="Runtime was already stopped.",
+                source="runtime_manager",
+            ),
+        )
+        save_runtime_registry(registry_file, registry)
+        return RuntimeStopResult(
+            symbol=symbol,
+            previous_session_id="",
+            runtime_state="stopped",
+            stopped_at_utc=stopped_at,
+            status_message="Runtime was already stopped.",
+            runtime=stopped_runtime,
+            session=None,
+        )
+
+    session = current_session_for_runtime(registry, runtime)
+    registry = register_managed_runtime(
+        registry,
+        ManagedRuntime(
+            **{
+                **runtime.__dict__,
+                "lifecycle_state": "stopping",
+                "stop_requested_at_utc": stopped_at,
+                "last_seen_utc": stopped_at,
+            }
+        ),
+        event=LifecycleEvent(
+            timestamp_utc=stopped_at,
+            symbol=symbol,
+            session_id=runtime.session_id,
+            event_type="stop_requested",
+            message=status_message,
+            source="runtime_manager",
+        ),
+    )
+
+    stop_message = status_message
+    if runtime.pid is not None:
+        try:
+            terminate_process(runtime.pid)
+        except ProcessLookupError:
+            stop_message = "Runtime process was already stopped."
+        except Exception as exc:
+            stop_message = str(exc)
+            failed_runtime = ManagedRuntime(
+                **{
+                    **runtime.__dict__,
+                    "lifecycle_state": "failed",
+                    "stop_requested_at_utc": stopped_at,
+                    "last_seen_utc": stopped_at,
+                    "failure_reason": stop_message,
+                }
+            )
+            registry = register_managed_runtime(
+                registry,
+                failed_runtime,
+                event=LifecycleEvent(
+                    timestamp_utc=stopped_at,
+                    symbol=symbol,
+                    session_id=runtime.session_id,
+                    event_type="failed",
+                    message=stop_message,
+                    source="runtime_manager",
+                ),
+            )
+            if session is not None:
+                registry = add_runtime_session(
+                    registry,
+                    RuntimeSession(
+                        **{
+                            **session.__dict__,
+                            "ended_at_utc": stopped_at,
+                            "end_reason": "stop_failed",
+                        }
+                    ),
+                    recent_limit=config.runtime_recent_sessions_limit,
+                )
+            save_runtime_registry(registry_file, registry)
+            return RuntimeStopResult(
+                symbol=symbol,
+                previous_session_id=runtime.session_id,
+                runtime_state="failed",
+                stopped_at_utc=stopped_at,
+                status_message=stop_message,
+                runtime=failed_runtime,
+                session=session,
+            )
+
+    stopped_runtime = ManagedRuntime(
+        **{
+            **runtime.__dict__,
+            "lifecycle_state": "stopped",
+            "pid": None,
+            "stop_requested_at_utc": stopped_at,
+            "last_seen_utc": stopped_at,
+            "last_exit_code": 0,
+            "failure_reason": "",
+        }
+    )
+    registry = register_managed_runtime(
+        registry,
+        stopped_runtime,
+        event=LifecycleEvent(
+            timestamp_utc=stopped_at,
+            symbol=symbol,
+            session_id=runtime.session_id,
+            event_type="stopped",
+            message=stop_message,
+            source="runtime_manager",
+        ),
+    )
+    if session is not None:
+        registry = add_runtime_session(
+            registry,
+            RuntimeSession(
+                **{
+                    **session.__dict__,
+                    "ended_at_utc": stopped_at,
+                    "exit_code": 0,
+                    "end_reason": stop_reason,
+                }
+            ),
+            recent_limit=config.runtime_recent_sessions_limit,
+        )
+    save_runtime_registry(registry_file, registry)
+    return RuntimeStopResult(
+        symbol=symbol,
+        previous_session_id=runtime.session_id,
+        runtime_state="stopped",
+        stopped_at_utc=stopped_at,
+        status_message=stop_message,
+        runtime=stopped_runtime,
+        session=session,
+    )
+
+
+def restart_managed_runtime(
+    config: BotConfig,
+    symbol: str,
+    *,
+    mode: str = "live",
+    registry_path: Path | None = None,
+    terminate_process: Any = _terminate_process,
+    popen_factory: Any = subprocess.Popen,
+    cwd: Path | None = None,
+    python_executable: str | None = None,
+) -> RuntimeRestartResult:
+    registry_file = Path(registry_path or config.runtime_registry_path)
+    registry = load_runtime_registry(registry_file)
+    previous_runtime = current_runtime_for_symbol(registry, symbol)
+    old_session_id = "" if previous_runtime is None else previous_runtime.session_id
+    restart_requested_at = utc_now_iso()
+    if previous_runtime is not None:
+        registry = register_managed_runtime(
+            registry,
+            ManagedRuntime(
+                **{
+                    **previous_runtime.__dict__,
+                    "lifecycle_state": "restarting",
+                    "last_seen_utc": restart_requested_at,
+                }
+            ),
+            event=LifecycleEvent(
+                timestamp_utc=restart_requested_at,
+                symbol=symbol,
+                session_id=old_session_id,
+                event_type="restart_requested",
+                message="Runtime restart requested.",
+                source="runtime_manager",
+            ),
+        )
+        save_runtime_registry(registry_file, registry)
+        stop_managed_runtime(
+            config,
+            symbol,
+            registry_path=registry_file,
+            terminate_process=terminate_process,
+            stop_reason="restart_requested",
+            status_message="Runtime restarting.",
+        )
+
+    start_result = start_managed_runtime(
+        config,
+        symbol,
+        mode=mode,
+        registry_path=registry_file,
+        popen_factory=popen_factory,
+        cwd=cwd,
+        python_executable=python_executable,
+        was_manual_recovery=True,
+    )
+    registry = load_runtime_registry(registry_file)
+    registry = register_managed_runtime(
+        registry,
+        start_result.runtime,
+        event=LifecycleEvent(
+            timestamp_utc=utc_now_iso(),
+            symbol=symbol,
+            session_id=start_result.session_id,
+            event_type="restarted",
+            message=start_result.status_message,
+            source="runtime_manager",
+        ),
+    )
+    save_runtime_registry(registry_file, registry)
+    return RuntimeRestartResult(
+        symbol=symbol,
+        old_session_id=old_session_id,
+        new_session_id=start_result.session_id,
+        runtime_state=start_result.runtime_state,
+        started_at_utc=start_result.started_at_utc,
+        status_message=start_result.status_message,
+        runtime=start_result.runtime,
+        session=start_result.session,
     )

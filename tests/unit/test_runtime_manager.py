@@ -14,8 +14,10 @@ from tradingbot.app.runtime_manager import (
     build_symbol_runtime_config,
     load_runtime_registry,
     register_managed_runtime,
+    restart_managed_runtime,
     start_managed_runtime,
     start_managed_runtimes,
+    stop_managed_runtime,
     runtime_registry_from_dict,
     runtime_registry_to_dict,
     runtime_state_index,
@@ -254,3 +256,201 @@ def test_start_managed_runtimes_tracks_independent_symbol_sessions(tmp_path: Pat
     assert runtime_index["BTC/USD"].pid == 1111
     assert runtime_index["ETH/USD"].pid == 2222
     assert runtime_index["BTC/USD"].session_id != runtime_index["ETH/USD"].session_id
+
+
+def test_stop_managed_runtime_marks_runtime_stopped_and_closes_session(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+
+    class FakeProcess:
+        pid = 4567
+
+    def fake_popen(command, cwd=None, env=None):
+        del command, cwd, env
+        return FakeProcess()
+
+    start_result = start_managed_runtime(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+    terminated: list[int] = []
+
+    def fake_terminate(pid: int):
+        terminated.append(pid)
+
+    stop_result = stop_managed_runtime(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        terminate_process=fake_terminate,
+    )
+    registry = load_runtime_registry(registry_path)
+    runtime = runtime_state_index(registry)["BTC/USD"]
+
+    assert terminated == [4567]
+    assert stop_result.previous_session_id == start_result.session_id
+    assert stop_result.runtime_state == "stopped"
+    assert runtime.lifecycle_state == "stopped"
+    assert runtime.pid is None
+    assert registry.recent_sessions[-1].end_reason == "operator_stop"
+
+
+def test_stop_managed_runtime_handles_already_dead_process_cleanly(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+    registry = RuntimeRegistry(
+        managed_runtimes=(
+            _runtime(
+                session_id="session-btc",
+                pid=4567,
+                decision_log_path="logs/paper_validation_btcusd/decisions.csv",
+                fill_log_path="logs/paper_validation_btcusd/fills.csv",
+                snapshot_log_path="logs/paper_validation_btcusd/daily_snapshot.csv",
+            ),
+        ),
+        recent_sessions=(_session(session_id="session-btc"),),
+    )
+    save_runtime_registry(registry_path, registry)
+
+    def fake_terminate(pid: int):
+        del pid
+        raise ProcessLookupError()
+
+    stop_result = stop_managed_runtime(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        terminate_process=fake_terminate,
+    )
+    runtime = runtime_state_index(load_runtime_registry(registry_path))["BTC/USD"]
+
+    assert stop_result.runtime_state == "stopped"
+    assert stop_result.status_message == "Runtime process was already stopped."
+    assert runtime.lifecycle_state == "stopped"
+    assert runtime.pid is None
+
+
+def test_restart_managed_runtime_replaces_session_with_fresh_running_session(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+
+    class FakeProcess:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+    pids = iter((1234, 5678))
+
+    def fake_popen(command, cwd=None, env=None):
+        del command, cwd, env
+        return FakeProcess(next(pids))
+
+    start_result = start_managed_runtime(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+    terminated: list[int] = []
+
+    def fake_terminate(pid: int):
+        terminated.append(pid)
+
+    restart_result = restart_managed_runtime(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        terminate_process=fake_terminate,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+    registry = load_runtime_registry(registry_path)
+    runtime = runtime_state_index(registry)["BTC/USD"]
+
+    assert terminated == [1234]
+    assert restart_result.old_session_id == start_result.session_id
+    assert restart_result.new_session_id != start_result.session_id
+    assert runtime.session_id == restart_result.new_session_id
+    assert runtime.pid == 5678
+    assert registry.recent_sessions[-1].was_manual_recovery is True
+    assert any(event.event_type == "restart_requested" for event in registry.lifecycle_events)
+    assert any(event.event_type == "restarted" for event in registry.lifecycle_events)
+
+
+def test_start_managed_runtime_respects_live_safety_guardrails(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(
+        runtime_registry_path=str(registry_path),
+        paper=False,
+        live_trading_enabled=False,
+        live_run_confirmation="",
+    )
+    popen_called = False
+
+    def fake_popen(command, cwd=None, env=None):
+        nonlocal popen_called
+        popen_called = True
+        raise AssertionError("popen should not be called when live guardrails block the start")
+
+    result = start_managed_runtime(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+    runtime = runtime_state_index(load_runtime_registry(registry_path))["BTC/USD"]
+
+    assert popen_called is False
+    assert result.runtime_state == "failed"
+    assert "Live trading is blocked" in result.status_message
+    assert runtime.lifecycle_state == "failed"
+
+
+def test_restart_managed_runtime_respects_live_safety_guardrails(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(
+        runtime_registry_path=str(registry_path),
+        paper=False,
+        live_trading_enabled=True,
+        live_run_confirmation="WRONG",
+        live_confirmation_token="CONFIRM",
+    )
+    registry = RuntimeRegistry(
+        managed_runtimes=(
+            _runtime(
+                session_id="session-btc",
+                pid=1234,
+                decision_log_path="logs/paper_validation_btcusd/decisions.csv",
+                fill_log_path="logs/paper_validation_btcusd/fills.csv",
+                snapshot_log_path="logs/paper_validation_btcusd/daily_snapshot.csv",
+            ),
+        ),
+        recent_sessions=(_session(session_id="session-btc"),),
+    )
+    save_runtime_registry(registry_path, registry)
+    terminated: list[int] = []
+
+    def fake_terminate(pid: int):
+        terminated.append(pid)
+
+    def fake_popen(command, cwd=None, env=None):
+        raise AssertionError("popen should not be called when restart is blocked")
+
+    restart_result = restart_managed_runtime(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        terminate_process=fake_terminate,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+    runtime = runtime_state_index(load_runtime_registry(registry_path))["BTC/USD"]
+
+    assert terminated == [1234]
+    assert restart_result.runtime_state == "failed"
+    assert "Live trading is blocked" in restart_result.status_message
+    assert runtime.lifecycle_state == "failed"

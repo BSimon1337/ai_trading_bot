@@ -322,6 +322,35 @@ def test_dashboard_status_includes_runtime_registry_fields_on_instance_payload(t
     assert item["is_fresh_runtime_session"] is True
 
 
+def test_dashboard_status_keeps_stop_and_failure_runtime_messages_visible(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="stopped",
+                runtime_status_message="Runtime stopped by operator.",
+                runtime_session_id="session-btc",
+                runtime_pid=None,
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:10:00+00:00",
+                last_lifecycle_event="stopped",
+                is_fresh_runtime_session=False,
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "stopped"
+    assert item["runtime_status_message"] == "Runtime stopped by operator."
+    assert item["last_lifecycle_event"] == "stopped"
+
+
 def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_path):
     fallback_paths = create_monitor_fixture(tmp_path / "fallback", "healthy", symbol="BTC/USD")
     real_paths = create_monitor_fixture(tmp_path / "real", "healthy", symbol="ETH/USD")

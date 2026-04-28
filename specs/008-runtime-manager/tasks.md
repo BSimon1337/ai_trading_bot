@@ -75,19 +75,19 @@
 
 ### Tests for User Story 2
 
-- [ ] T021 [P] [US2] Add unit tests for stop-request and graceful stopped-state handling in `tests/unit/test_runtime_manager.py`
-- [ ] T022 [P] [US2] Add unit tests for restart session replacement and fresh-session precedence in `tests/unit/test_runtime_manager.py`
-- [ ] T023 [P] [US2] Add unit tests for live-safety gating during runtime start and restart in `tests/unit/test_runtime_manager.py`
-- [ ] T024 [P] [US2] Add smoke coverage for stop and restart flows in `tests/smoke/test_runtime_manager_entrypoint.py`
+- [x] T021 [P] [US2] Add unit tests for stop-request and graceful stopped-state handling in `tests/unit/test_runtime_manager.py`
+- [x] T022 [P] [US2] Add unit tests for restart session replacement and fresh-session precedence in `tests/unit/test_runtime_manager.py`
+- [x] T023 [P] [US2] Add unit tests for live-safety gating during runtime start and restart in `tests/unit/test_runtime_manager.py`
+- [x] T024 [P] [US2] Add smoke coverage for stop and restart flows in `tests/smoke/test_runtime_manager_entrypoint.py`
 
 ### Implementation for User Story 2
 
-- [ ] T025 [US2] Implement runtime stop flow and dead-process reconciliation in `tradingbot/app/runtime_manager.py`
-- [ ] T026 [US2] Implement runtime restart flow with new session creation in `tradingbot/app/runtime_manager.py`
-- [ ] T027 [US2] Integrate existing live-safety expectations into runtime-manager launch and restart paths in `tradingbot/app/runtime_manager.py` and `tradingbot/config/settings.py`
-- [ ] T028 [US2] Expose stop/restart lifecycle events and stop/failure reasons to the monitor payload in `tradingbot/app/monitor.py`
-- [ ] T029 [US2] Update tray runtime summary to reflect managed runtime failures and running counts in `tradingbot/app/tray.py`
-- [ ] T030 [US2] Validate User Story 2 by running `tests/unit/test_runtime_manager.py`, `tests/contract/test_tray_monitor_contract.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/smoke/test_runtime_manager_entrypoint.py`
+- [x] T025 [US2] Implement runtime stop flow and dead-process reconciliation in `tradingbot/app/runtime_manager.py`
+- [x] T026 [US2] Implement runtime restart flow with new session creation in `tradingbot/app/runtime_manager.py`
+- [x] T027 [US2] Integrate existing live-safety expectations into runtime-manager launch and restart paths in `tradingbot/app/runtime_manager.py` and `tradingbot/config/settings.py`
+- [x] T028 [US2] Expose stop/restart lifecycle events and stop/failure reasons to the monitor payload in `tradingbot/app/monitor.py`
+- [x] T029 [US2] Update tray runtime summary to reflect managed runtime failures and running counts in `tradingbot/app/tray.py`
+- [x] T030 [US2] Validate User Story 2 by running `tests/unit/test_runtime_manager.py`, `tests/contract/test_tray_monitor_contract.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/smoke/test_runtime_manager_entrypoint.py`
 
 **Checkpoint**: Operators can stop or restart managed runtimes safely without blind process killing or live-safety regressions.
 

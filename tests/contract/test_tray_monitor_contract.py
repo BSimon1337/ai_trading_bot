@@ -160,3 +160,31 @@ def test_tray_monitor_contract_shows_historical_context_without_changing_live_st
 
     assert result["state"] == "live"
     assert "Historical: 3." in controller.state.tooltip
+
+
+def test_tray_monitor_contract_reports_runtime_counts_without_changing_read_only_mode():
+    controller, result = start_monitor_tray(
+        config=MonitorConfiguration(dashboard_host="127.0.0.1", dashboard_port=8080, instances=()),
+        payload_loader=lambda: {
+            "status_updated_utc": "2026-04-19 12:00:00 UTC",
+            "aggregate_state": "live",
+            "instances": [
+                {"label": "BTC/USD", "runtime_state": "running", "runtime_last_seen_utc": "2026-04-19T12:00:00+00:00"},
+                {"label": "ETH/USD", "runtime_state": "failed", "runtime_last_seen_utc": "2026-04-19T11:59:00+00:00"},
+            ],
+            "issues": [],
+            "notes": [],
+            "historical_context": {"historical_issue_count": 0},
+        },
+        browser_opener=lambda url: True,
+        dependencies=TrayDependencies(
+            available=True,
+            pystray=FakePystray,
+            image_module=FakeImage,
+            image_draw_module=FakeImageDraw,
+        ),
+    )
+
+    assert result["state"] == "live"
+    assert "Running runtimes: 1." in controller.state.tooltip
+    assert "Failed runtimes: 1." in controller.state.tooltip
