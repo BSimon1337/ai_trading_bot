@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from tests.fixtures.monitor.build_fixtures import create_monitor_fixture
-from tradingbot.app.monitor import DashboardInstance, create_app
+from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, write_runtime_registry
+from tradingbot.app.monitor import DashboardInstance, create_app, load_monitor_configuration
 
 
 def _instance(root, label: str = "BTC/USD") -> DashboardInstance:
@@ -58,6 +58,14 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "latest_mode",
         "latest_asset_class",
         "latest_update_utc",
+        "runtime_state",
+        "runtime_status_message",
+        "runtime_session_id",
+        "runtime_pid",
+        "runtime_started_at_utc",
+        "runtime_last_seen_utc",
+        "last_lifecycle_event",
+        "is_fresh_runtime_session",
         "last_decision_utc",
         "last_fill_utc",
         "broker_rejection_count",
@@ -92,6 +100,62 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert b"Sentiment State" in page_response.data
     assert b"Recent Headlines" in page_response.data
     assert b"Sentiment Trend" in page_response.data
+    assert b"Runtime State" in page_response.data
+
+
+def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path, monkeypatch):
+    fixture_root = tmp_path / "paper_validation_btcusd"
+    create_monitor_fixture(fixture_root, "healthy", symbol="BTC/USD")
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-28T02:00:00+00:00",
+            "managed_runtimes": [
+                {
+                    "symbol": "BTC/USD",
+                    "instance_label": "BTC/USD",
+                    "mode": "live",
+                    "lifecycle_state": "running",
+                    "session_id": "session-btc",
+                    "pid": 2468,
+                    "started_at_utc": "2026-04-28T01:55:00+00:00",
+                    "last_seen_utc": "2026-04-28T02:00:00+00:00",
+                    "decision_log_path": str(fixture_root / "decisions.csv"),
+                    "fill_log_path": str(fixture_root / "fills.csv"),
+                    "snapshot_log_path": str(fixture_root / "daily_snapshot.csv"),
+                }
+            ],
+            "recent_sessions": [],
+            "lifecycle_events": [
+                {
+                    "timestamp_utc": "2026-04-28T02:00:00+00:00",
+                    "symbol": "BTC/USD",
+                    "session_id": "session-btc",
+                    "event_type": "running",
+                    "message": "Runtime is running.",
+                    "source": "runtime_manager",
+                }
+            ],
+        },
+    )
+    monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
+    config = load_monitor_configuration(symbols=("BTC/USD",), base_dir=tmp_path)
+    app = create_app(instances=config.instances)
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "running"
+    assert item["runtime_status_message"] == "Runtime is running."
+    assert item["runtime_session_id"] == "session-btc"
+    assert item["runtime_pid"] == 2468
+    assert item["runtime_started_at_utc"] == "2026-04-28T01:55:00+00:00"
+    assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
+    assert item["last_lifecycle_event"] == "running"
+    assert item["is_fresh_runtime_session"] is True
 
 
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):

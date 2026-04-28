@@ -49,19 +49,19 @@
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Add unit tests for managed runtime creation and running-state registration in `tests/unit/test_runtime_manager.py`
-- [ ] T012 [P] [US1] Add unit tests for symbol-scoped log-path derivation and session identity handling in `tests/unit/test_runtime_manager.py`
-- [ ] T013 [P] [US1] Add monitor contract tests for required runtime-state fields on instances in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T014 [P] [US1] Add smoke coverage for starting one managed symbol runtime in `tests/smoke/test_runtime_manager_entrypoint.py`
+- [x] T011 [P] [US1] Add unit tests for managed runtime creation and running-state registration in `tests/unit/test_runtime_manager.py`
+- [x] T012 [P] [US1] Add unit tests for symbol-scoped log-path derivation and session identity handling in `tests/unit/test_runtime_manager.py`
+- [x] T013 [P] [US1] Add monitor contract tests for required runtime-state fields on instances in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T014 [P] [US1] Add smoke coverage for starting one managed symbol runtime in `tests/smoke/test_runtime_manager_entrypoint.py`
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Implement symbol-scoped launch command and environment assembly in `tradingbot/app/runtime_manager.py`
-- [ ] T016 [US1] Implement runtime start and current-session registration flow in `tradingbot/app/runtime_manager.py`
-- [ ] T017 [US1] Add a runtime-manager entrypoint and startup hook in `tradingbot/app/main.py`
-- [ ] T018 [US1] Surface managed runtime state, session id, pid, and lifecycle timestamps in `tradingbot/app/monitor.py`
-- [ ] T019 [US1] Update per-symbol dashboard rendering for runtime state visibility in `templates/monitor.html`
-- [ ] T020 [US1] Validate User Story 1 by running `tests/unit/test_runtime_manager.py`, `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/smoke/test_runtime_manager_entrypoint.py`
+- [x] T015 [US1] Implement symbol-scoped launch command and environment assembly in `tradingbot/app/runtime_manager.py`
+- [x] T016 [US1] Implement runtime start and current-session registration flow in `tradingbot/app/runtime_manager.py`
+- [x] T017 [US1] Add a runtime-manager entrypoint and startup hook in `tradingbot/app/main.py`
+- [x] T018 [US1] Surface managed runtime state, session id, pid, and lifecycle timestamps in `tradingbot/app/monitor.py`
+- [x] T019 [US1] Update per-symbol dashboard rendering for runtime state visibility in `templates/monitor.html`
+- [x] T020 [US1] Validate User Story 1 by running `tests/unit/test_runtime_manager.py`, `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, and `tests/smoke/test_runtime_manager_entrypoint.py`
 
 **Checkpoint**: The application can start and track managed symbol runtimes from one shared backend layer.
 

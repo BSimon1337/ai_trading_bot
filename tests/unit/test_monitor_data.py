@@ -288,6 +288,40 @@ def test_summarize_instance_preserves_runtime_registry_metadata(tmp_path):
     assert summary.is_fresh_runtime_session is True
 
 
+def test_dashboard_status_includes_runtime_registry_fields_on_instance_payload(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_status_message="Runtime is running.",
+                runtime_session_id="session-btc",
+                runtime_pid=2468,
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:00:00+00:00",
+                last_lifecycle_event="running",
+                is_fresh_runtime_session=True,
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "running"
+    assert item["runtime_status_message"] == "Runtime is running."
+    assert item["runtime_session_id"] == "session-btc"
+    assert item["runtime_pid"] == 2468
+    assert item["runtime_started_at_utc"] == "2026-04-28T01:55:00+00:00"
+    assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
+    assert item["last_lifecycle_event"] == "running"
+    assert item["is_fresh_runtime_session"] is True
+
+
 def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_path):
     fallback_paths = create_monitor_fixture(tmp_path / "fallback", "healthy", symbol="BTC/USD")
     real_paths = create_monitor_fixture(tmp_path / "real", "healthy", symbol="ETH/USD")

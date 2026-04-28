@@ -11,7 +11,14 @@ from typing import Any
 import pandas as pd
 from flask import Flask, jsonify, render_template
 
-from tradingbot.app.runtime_manager import ManagedRuntime, empty_runtime_registry, load_runtime_registry, runtime_state_index
+from tradingbot.app.runtime_manager import (
+    LifecycleEvent,
+    ManagedRuntime,
+    empty_runtime_registry,
+    lifecycle_event_index,
+    load_runtime_registry,
+    runtime_state_index,
+)
 from tradingbot.config.settings import BotConfig, infer_asset_class
 from tradingbot.sentiment.scoring import sentiment_availability_state
 
@@ -291,6 +298,7 @@ def discover_monitor_instances(
     symbols: tuple[str, ...] | None = None,
     base_dir: Path = Path("logs"),
     runtime_index: dict[str, ManagedRuntime] | None = None,
+    lifecycle_index: dict[str, LifecycleEvent] | None = None,
 ) -> tuple[DashboardInstance, ...]:
     if symbols is None and config is not None:
         symbols = config.symbols
@@ -307,6 +315,7 @@ def discover_monitor_instances(
         else:
             decision_path, fill_path, snapshot_path = _paths_for_symbol(symbol, base_dir=base_dir)
         runtime = (runtime_index or {}).get(symbol)
+        lifecycle_event = (lifecycle_index or {}).get(symbol)
         instances.append(
             DashboardInstance(
                 label=symbol,
@@ -318,23 +327,26 @@ def discover_monitor_instances(
                 runtime_state="" if runtime is None else runtime.lifecycle_state,
                 runtime_status_message=""
                 if runtime is None
-                else runtime.failure_reason or runtime.lifecycle_state.replace("_", " "),
+                else runtime.failure_reason or (lifecycle_event.message if lifecycle_event is not None else runtime.lifecycle_state.replace("_", " ")),
                 runtime_session_id="" if runtime is None else runtime.session_id,
                 runtime_pid=None if runtime is None else runtime.pid,
                 runtime_started_at_utc="" if runtime is None else runtime.started_at_utc,
                 runtime_last_seen_utc="" if runtime is None else runtime.last_seen_utc,
+                last_lifecycle_event="" if lifecycle_event is None else lifecycle_event.event_type,
                 is_fresh_runtime_session=bool(runtime and runtime.lifecycle_state in {"starting", "running", "restarting"}),
             )
         )
     return tuple(instances)
 
 
-def load_runtime_index(runtime_registry_path: Path) -> dict[str, ManagedRuntime]:
+def load_runtime_registry_views(
+    runtime_registry_path: Path,
+) -> tuple[dict[str, ManagedRuntime], dict[str, LifecycleEvent]]:
     try:
         registry = load_runtime_registry(runtime_registry_path)
     except (OSError, ValueError, json.JSONDecodeError):
         registry = empty_runtime_registry()
-    return runtime_state_index(registry)
+    return runtime_state_index(registry), lifecycle_event_index(registry)
 
 
 def load_monitor_configuration(
@@ -360,7 +372,7 @@ def load_monitor_configuration(
         for marker in os.getenv("MONITOR_ARCHIVE_MARKERS", ",".join(DEFAULT_ARCHIVE_MARKERS)).split(",")
         if marker.strip()
     ) or DEFAULT_ARCHIVE_MARKERS
-    runtime_index = load_runtime_index(runtime_registry_path)
+    runtime_index, lifecycle_index = load_runtime_registry_views(runtime_registry_path)
     return MonitorConfiguration(
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -371,7 +383,13 @@ def load_monitor_configuration(
         tray_enabled=tray_enabled,
         read_only=True,
         runtime_registry_path=runtime_registry_path,
-        instances=discover_monitor_instances(config=config, symbols=symbols, base_dir=base_dir, runtime_index=runtime_index),
+        instances=discover_monitor_instances(
+            config=config,
+            symbols=symbols,
+            base_dir=base_dir,
+            runtime_index=runtime_index,
+            lifecycle_index=lifecycle_index,
+        ),
     )
 
 
@@ -1150,6 +1168,14 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "latest_asset_class": latest_decision.asset_class or (instance.asset_classes[0] if instance.asset_classes else "unknown"),
         "latest_source": latest_decision.action_source or "n/a",
         "latest_update_utc": instance.last_updated_at,
+        "runtime_state": instance.runtime_state,
+        "runtime_status_message": instance.runtime_status_message,
+        "runtime_session_id": instance.runtime_session_id,
+        "runtime_pid": instance.runtime_pid,
+        "runtime_started_at_utc": instance.runtime_started_at_utc,
+        "runtime_last_seen_utc": instance.runtime_last_seen_utc,
+        "last_lifecycle_event": instance.last_lifecycle_event,
+        "is_fresh_runtime_session": instance.is_fresh_runtime_session,
         "last_decision_utc": latest_decision.timestamp or "",
         "last_fill_utc": latest_fill.timestamp or "",
         "heartbeat_age_minutes": instance.status.age_minutes,

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+from tradingbot.config.settings import BotConfig, infer_asset_class
 
 
 RUNTIME_REGISTRY_VERSION = 1
@@ -67,12 +73,51 @@ class RuntimeRegistry:
     lifecycle_events: tuple[LifecycleEvent, ...] = ()
 
 
+@dataclass(frozen=True)
+class RuntimeLogScope:
+    decision_log_path: str
+    fill_log_path: str
+    snapshot_log_path: str
+
+
+@dataclass(frozen=True)
+class RuntimeStartResult:
+    symbol: str
+    session_id: str
+    runtime_state: str
+    started_at_utc: str
+    pid: int | None
+    status_message: str
+    runtime: ManagedRuntime
+    session: RuntimeSession
+
+
 def _coerce_sequence(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
 def _coerce_recent_limit(value: int) -> int:
     return value if value > 0 else DEFAULT_RECENT_SESSIONS_LIMIT
+
+
+def _sanitize_symbol_for_path(symbol: str) -> str:
+    return "".join(character for character in symbol.strip().lower() if character.isalnum())
+
+
+def symbol_log_scope(symbol: str, *, base_dir: Path = Path("logs")) -> RuntimeLogScope:
+    normalized_symbol = symbol.strip()
+    suffix = "" if normalized_symbol.upper() == "SPY" else f"_{_sanitize_symbol_for_path(normalized_symbol)}"
+    root = Path(base_dir) / f"paper_validation{suffix}"
+    return RuntimeLogScope(
+        decision_log_path=str(root / "decisions.csv"),
+        fill_log_path=str(root / "fills.csv"),
+        snapshot_log_path=str(root / "daily_snapshot.csv"),
+    )
+
+
+def create_runtime_session_id(symbol: str) -> str:
+    slug = _sanitize_symbol_for_path(symbol) or "symbol"
+    return f"{slug}-{uuid4().hex[:12]}"
 
 
 def _runtime_from_dict(value: dict[str, Any]) -> ManagedRuntime:
@@ -215,3 +260,226 @@ def add_runtime_session(
 
 def runtime_state_index(registry: RuntimeRegistry) -> dict[str, ManagedRuntime]:
     return {runtime.symbol: runtime for runtime in registry.managed_runtimes}
+
+
+def lifecycle_event_index(registry: RuntimeRegistry) -> dict[str, LifecycleEvent]:
+    latest: dict[str, LifecycleEvent] = {}
+    for event in registry.lifecycle_events:
+        latest[event.symbol] = event
+    return latest
+
+
+def build_symbol_runtime_config(config: BotConfig, symbol: str) -> BotConfig:
+    log_scope = symbol_log_scope(symbol)
+    return BotConfig(
+        **{
+            **config.__dict__,
+            "symbol": symbol,
+            "symbols": (symbol,),
+            "decision_log_path": log_scope.decision_log_path,
+            "fill_log_path": log_scope.fill_log_path,
+            "daily_snapshot_path": log_scope.snapshot_log_path,
+        }
+    )
+
+
+def build_runtime_launch_command(
+    *,
+    python_executable: str | None = None,
+    mode: str = "live",
+) -> tuple[str, ...]:
+    return (
+        python_executable or sys.executable,
+        "-m",
+        "tradingbot.app.main",
+        "--mode",
+        mode,
+    )
+
+
+def build_runtime_launch_env(
+    config: BotConfig,
+    symbol: str,
+) -> tuple[dict[str, str], dict[str, str], RuntimeLogScope]:
+    symbol_config = build_symbol_runtime_config(config, symbol)
+    log_scope = RuntimeLogScope(
+        decision_log_path=symbol_config.decision_log_path,
+        fill_log_path=symbol_config.fill_log_path,
+        snapshot_log_path=symbol_config.daily_snapshot_path,
+    )
+    launch_env_scope = {
+        "SYMBOL": symbol,
+        "SYMBOLS": symbol,
+        "CRYPTO_SYMBOLS": "",
+        "ALPACA_CRYPTO_UNIVERSE": "none",
+        "DECISION_LOG_PATH": log_scope.decision_log_path,
+        "FILL_LOG_PATH": log_scope.fill_log_path,
+        "DAILY_SNAPSHOT_PATH": log_scope.snapshot_log_path,
+        "RUNTIME_REGISTRY_PATH": config.runtime_registry_path,
+    }
+    if infer_asset_class(symbol) == "crypto":
+        launch_env_scope["SYMBOL"] = symbol
+        launch_env_scope["SYMBOLS"] = symbol
+    environment = os.environ.copy()
+    environment.update(launch_env_scope)
+    return environment, launch_env_scope, log_scope
+
+
+def start_managed_runtime(
+    config: BotConfig,
+    symbol: str,
+    *,
+    mode: str = "live",
+    registry_path: Path | None = None,
+    popen_factory: Any = subprocess.Popen,
+    cwd: Path | None = None,
+    python_executable: str | None = None,
+) -> RuntimeStartResult:
+    registry_file = Path(registry_path or config.runtime_registry_path)
+    registry = load_runtime_registry(registry_file)
+    started_at = utc_now_iso()
+    session_id = create_runtime_session_id(symbol)
+    command = build_runtime_launch_command(python_executable=python_executable, mode=mode)
+    environment, launch_env_scope, log_scope = build_runtime_launch_env(config, symbol)
+
+    session = RuntimeSession(
+        session_id=session_id,
+        symbol=symbol,
+        mode=mode,
+        launch_command=command,
+        launch_env_scope=launch_env_scope,
+        started_at_utc=started_at,
+        was_live_mode=not config.paper,
+        was_manual_recovery=False,
+    )
+    starting_runtime = ManagedRuntime(
+        symbol=symbol,
+        instance_label=symbol,
+        mode=mode,
+        lifecycle_state="starting",
+        session_id=session_id,
+        started_at_utc=started_at,
+        last_seen_utc=started_at,
+        decision_log_path=log_scope.decision_log_path,
+        fill_log_path=log_scope.fill_log_path,
+        snapshot_log_path=log_scope.snapshot_log_path,
+    )
+    registry = add_runtime_session(registry, session, recent_limit=config.runtime_recent_sessions_limit)
+    registry = register_managed_runtime(
+        registry,
+        starting_runtime,
+        event=LifecycleEvent(
+            timestamp_utc=started_at,
+            symbol=symbol,
+            session_id=session_id,
+            event_type="start_requested",
+            message="Runtime start requested.",
+            source="runtime_manager",
+        ),
+    )
+    save_runtime_registry(registry_file, registry)
+
+    try:
+        process = popen_factory(
+            list(command),
+            cwd=str(cwd or Path.cwd()),
+            env=environment,
+        )
+    except Exception as exc:
+        failed_at = utc_now_iso()
+        failed_session = RuntimeSession(
+            **{
+                **session.__dict__,
+                "ended_at_utc": failed_at,
+                "end_reason": "launch_failed",
+            }
+        )
+        failed_runtime = ManagedRuntime(
+            **{
+                **starting_runtime.__dict__,
+                "lifecycle_state": "failed",
+                "last_seen_utc": failed_at,
+                "failure_reason": str(exc),
+            }
+        )
+        registry = add_runtime_session(registry, failed_session, recent_limit=config.runtime_recent_sessions_limit)
+        registry = register_managed_runtime(
+            registry,
+            failed_runtime,
+            event=LifecycleEvent(
+                timestamp_utc=failed_at,
+                symbol=symbol,
+                session_id=session_id,
+                event_type="failed",
+                message=str(exc),
+                source="runtime_manager",
+            ),
+        )
+        save_runtime_registry(registry_file, registry)
+        return RuntimeStartResult(
+            symbol=symbol,
+            session_id=session_id,
+            runtime_state="failed",
+            started_at_utc=started_at,
+            pid=None,
+            status_message=str(exc),
+            runtime=failed_runtime,
+            session=failed_session,
+        )
+
+    running_at = utc_now_iso()
+    running_runtime = ManagedRuntime(
+        **{
+            **starting_runtime.__dict__,
+            "lifecycle_state": "running",
+            "pid": getattr(process, "pid", None),
+            "last_seen_utc": running_at,
+        }
+    )
+    registry = register_managed_runtime(
+        registry,
+        running_runtime,
+        event=LifecycleEvent(
+            timestamp_utc=running_at,
+            symbol=symbol,
+            session_id=session_id,
+            event_type="running",
+            message="Runtime is running.",
+            source="runtime_manager",
+        ),
+    )
+    save_runtime_registry(registry_file, registry)
+    return RuntimeStartResult(
+        symbol=symbol,
+        session_id=session_id,
+        runtime_state="running",
+        started_at_utc=started_at,
+        pid=getattr(process, "pid", None),
+        status_message="Runtime is running.",
+        runtime=running_runtime,
+        session=session,
+    )
+
+
+def start_managed_runtimes(
+    config: BotConfig,
+    symbols: tuple[str, ...],
+    *,
+    mode: str = "live",
+    registry_path: Path | None = None,
+    popen_factory: Any = subprocess.Popen,
+    cwd: Path | None = None,
+    python_executable: str | None = None,
+) -> tuple[RuntimeStartResult, ...]:
+    return tuple(
+        start_managed_runtime(
+            config,
+            symbol,
+            mode=mode,
+            registry_path=registry_path,
+            popen_factory=popen_factory,
+            cwd=cwd,
+            python_executable=python_executable,
+        )
+        for symbol in symbols
+    )
