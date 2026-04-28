@@ -28,6 +28,13 @@ http://127.0.0.1:8080
 
 Use the runtime-manager entrypoint to start one symbol.
 
+Example:
+
+```powershell
+cd C:\Users\Beau\ai_trading_bot
+.\.venv\Scripts\python.exe -m tradingbot.app.main --mode runtime-start --managed-symbol BTC/USD
+```
+
 Expected result:
 
 - The symbol runtime launches without opening a manual PowerShell workflow.
@@ -40,6 +47,13 @@ Expected result:
 
 Start more than one configured symbol runtime.
 
+Example:
+
+```powershell
+cd C:\Users\Beau\ai_trading_bot
+.\.venv\Scripts\python.exe -m tradingbot.app.main --mode runtime-start --managed-symbol BTC/USD --managed-symbol ETH/USD
+```
+
 Expected result:
 
 - Each symbol shows an independent runtime state.
@@ -49,6 +63,14 @@ Expected result:
 ## Validate Stop And Restart
 
 Stop one active symbol, then restart it.
+
+Example:
+
+```powershell
+cd C:\Users\Beau\ai_trading_bot
+.\.venv\Scripts\python.exe -m tradingbot.app.main --mode runtime-stop --managed-symbol BTC/USD
+.\.venv\Scripts\python.exe -m tradingbot.app.main --mode runtime-restart --managed-symbol BTC/USD
+```
 
 Expected result:
 
@@ -60,6 +82,11 @@ Expected result:
 ## Validate Live Safety
 
 Attempt a live-mode runtime start using the same configuration expectations currently required for live trading.
+
+Example expectation:
+
+- if `PAPER_TRADING=0` and the live confirmation inputs are missing or mismatched, `runtime-start` should fail closed and write a readable failed runtime state
+- if the live confirmation inputs are valid, the managed runtime may proceed and should still remain one process per symbol
 
 Expected result:
 
@@ -99,3 +126,5 @@ Expected manual checks for implementation:
 - Restart that symbol and confirm the fresh runtime session overrides the old one.
 - Start multiple symbols and confirm each shows the correct independent runtime state.
 - Confirm no credentials appear in runtime-manager registry or monitor payloads.
+- Confirm that a stopped symbol remains visible in the monitor instead of silently disappearing.
+- Confirm that a fresh restarted runtime does not inherit an older failed status from pre-restart CSV evidence.

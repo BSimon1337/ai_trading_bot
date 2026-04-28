@@ -149,6 +149,8 @@ What the refined monitor now shows:
 - current per-symbol sentiment label, confidence, source, and fallback state
 - bounded recent headline previews and short sentiment trend history per symbol
 - stale and no-headline sentiment explanations without changing the monitor's read-only behavior
+- app-owned runtime state per symbol, including session id, lifecycle event, and fresh-session context
+- a clear distinction between `running`, `stopped`, `paused`, `failed`, and merely `stale` evidence
 
 Recommended monitor startup for your current multi-crypto setup:
 
@@ -178,6 +180,34 @@ Monitor troubleshooting:
 - Tray unavailable: use `tradingbot-monitor --no-tray` to keep the dashboard usable if `pystray` cannot attach to the local desktop session.
 - Historical noise still showing up as current: move older evidence into folders named like `archived`, `history`, or `old`, or set `MONITOR_ARCHIVE_MARKERS` to match your retention folder names.
 - Current evidence feeling too old or too aggressive: tune `MONITOR_STALE_AFTER_MINUTES` and `MONITOR_HISTORICAL_ISSUE_LIMIT` for your local workflow.
+- Runtime shows `stopped` while old decisions still exist: this is expected once the runtime manager owns lifecycle state; `stopped` now beats stale CSV evidence.
+
+## Runtime Manager
+
+The runtime manager is now the intended way to own bot process lifecycle locally. It keeps one managed process per symbol, writes a local runtime registry, and feeds runtime state into the dashboard and tray.
+
+Common lifecycle commands from the repo checkout:
+
+```powershell
+python -m tradingbot.app.main --mode runtime-start --managed-symbol BTC/USD
+python -m tradingbot.app.main --mode runtime-stop --managed-symbol BTC/USD
+python -m tradingbot.app.main --mode runtime-restart --managed-symbol BTC/USD
+```
+
+If you omit `--managed-symbol`, the runtime-manager command uses the configured symbol set from env/config.
+
+What the runtime manager preserves:
+
+- one authoritative current runtime entry per symbol
+- symbol-scoped decision/fill/snapshot logs
+- live-trading guardrails before managed starts and restarts
+- recent runtime session history for monitor/tray visibility
+
+What it does not do yet:
+
+- interactive dashboard controls
+- bulk process supervision beyond the local runtime registry
+- a separate approval path for live trading
 
 Generated runtime evidence:
 

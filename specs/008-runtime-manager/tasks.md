@@ -120,10 +120,10 @@
 
 **Purpose**: Final consistency, operator guidance, and end-to-end runtime-manager validation.
 
-- [ ] T038 [P] Review runtime-state field naming and lifecycle wording for consistency across `tradingbot/app/runtime_manager.py`, `tradingbot/app/monitor.py`, `tradingbot/app/tray.py`, and `templates/monitor.html`
-- [ ] T039 [P] Update operator-facing runtime-manager guidance in `README.md` and `specs/008-runtime-manager/quickstart.md`
-- [ ] T040 [P] Confirm no new unsafe control path or credential exposure was introduced in `specs/008-runtime-manager/research.md`, `tradingbot/app/runtime_manager.py`, and `tradingbot/app/monitor.py`
-- [ ] T041 Run full runtime-manager validation from `specs/008-runtime-manager/quickstart.md`
+- [x] T038 [P] Review runtime-state field naming and lifecycle wording for consistency across `tradingbot/app/runtime_manager.py`, `tradingbot/app/monitor.py`, `tradingbot/app/tray.py`, and `templates/monitor.html`
+- [x] T039 [P] Update operator-facing runtime-manager guidance in `README.md` and `specs/008-runtime-manager/quickstart.md`
+- [x] T040 [P] Confirm no new unsafe control path or credential exposure was introduced in `specs/008-runtime-manager/research.md`, `tradingbot/app/runtime_manager.py`, and `tradingbot/app/monitor.py`
+- [x] T041 Run full runtime-manager validation from `specs/008-runtime-manager/quickstart.md`
 
 ---
 

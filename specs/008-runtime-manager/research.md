@@ -33,6 +33,8 @@
 - **Ungated runtime-manager launch path**: Rejected because it would create a backdoor around current live safeguards.
 - **Separate runtime-manager-only approval model**: Rejected because it would duplicate safety logic and increase the chance of inconsistent behavior.
 
+**Implementation note**: The managed launch environment only carries symbol-scoped runtime values such as `SYMBOLS`, `DECISION_LOG_PATH`, `FILL_LOG_PATH`, `DAILY_SNAPSHOT_PATH`, and `RUNTIME_REGISTRY_PATH`. The runtime registry itself does not persist Alpaca credentials or confirmation tokens.
+
 ## Decision 4: Show runtime-manager state in the existing monitor instead of building a new control UI first
 
 **Decision**: Add runtime lifecycle state to the current monitor and tray surfaces before introducing richer interactive controls.
@@ -43,3 +45,5 @@
 
 - **Build controls first, visibility second**: Rejected because hidden runtime behavior would make the new control plane harder to trust.
 - **Separate runtime console UI**: Rejected because it would fragment the operator experience.
+
+**Implementation note**: Runtime-manager state now takes precedence over stale CSV evidence for `stopped`, `paused`, `failed`, and fresh restart cases so the operator-facing monitor reflects current app-owned lifecycle truth rather than old trading artifacts.
