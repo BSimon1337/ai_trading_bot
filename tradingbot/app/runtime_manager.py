@@ -134,6 +134,29 @@ class RuntimeRestartResult:
     session: RuntimeSession
 
 
+def _control_outcome_from_runtime_state(runtime_state: str) -> str:
+    if runtime_state in {"running", "stopped"}:
+        return "succeeded"
+    if runtime_state in {"failed", "blocked"}:
+        return "failed"
+    return "pending"
+
+
+def _save_control_action(
+    registry_file: Path,
+    config: BotConfig,
+    action: ManagedControlAction,
+) -> ManagedControlAction:
+    registry = load_runtime_registry(registry_file)
+    registry = add_control_action(
+        registry,
+        action,
+        recent_limit=config.runtime_recent_control_actions_limit,
+    )
+    save_runtime_registry(registry_file, registry)
+    return action
+
+
 def _coerce_sequence(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
@@ -896,4 +919,185 @@ def restart_managed_runtime(
         status_message=start_result.status_message,
         runtime=start_result.runtime,
         session=start_result.session,
+    )
+
+
+def request_start_runtime_action(
+    config: BotConfig,
+    symbol: str,
+    *,
+    mode: str = "live",
+    registry_path: Path | None = None,
+    popen_factory: Any = subprocess.Popen,
+    cwd: Path | None = None,
+    python_executable: str | None = None,
+    requested_from: str = "dashboard",
+    confirmation_state: str = "not_required",
+) -> ManagedControlAction:
+    registry_file = Path(registry_path or config.runtime_registry_path)
+    current_runtime = current_runtime_for_symbol(load_runtime_registry(registry_file), symbol)
+    mode_context = "paper" if config.paper else "live"
+    if current_runtime is not None and current_runtime.lifecycle_state in {"starting", "running", "restarting", "stopping"}:
+        return _save_control_action(
+            registry_file,
+            config,
+            ManagedControlAction(
+                action_id=uuid4().hex,
+                symbol=symbol,
+                asset_class=infer_asset_class(symbol),
+                requested_action="start",
+                mode_context=mode_context,
+                requested_at_utc=utc_now_iso(),
+                requested_from=requested_from,
+                confirmation_state=confirmation_state,
+                outcome_state="blocked",
+                outcome_message=f"Runtime is already {current_runtime.lifecycle_state}.",
+                runtime_session_id=current_runtime.session_id,
+            ),
+        )
+
+    result = start_managed_runtime(
+        config,
+        symbol,
+        mode=mode,
+        registry_path=registry_file,
+        popen_factory=popen_factory,
+        cwd=cwd,
+        python_executable=python_executable,
+    )
+    return _save_control_action(
+        registry_file,
+        config,
+        ManagedControlAction(
+            action_id=uuid4().hex,
+            symbol=symbol,
+            asset_class=infer_asset_class(symbol),
+            requested_action="start",
+            mode_context=mode_context,
+            requested_at_utc=utc_now_iso(),
+            requested_from=requested_from,
+            confirmation_state=confirmation_state,
+            outcome_state=_control_outcome_from_runtime_state(result.runtime_state),
+            outcome_message=result.status_message,
+            runtime_session_id=result.session_id,
+        ),
+    )
+
+
+def request_stop_runtime_action(
+    config: BotConfig,
+    symbol: str,
+    *,
+    registry_path: Path | None = None,
+    terminate_process: Any = _terminate_process,
+    requested_from: str = "dashboard",
+) -> ManagedControlAction:
+    registry_file = Path(registry_path or config.runtime_registry_path)
+    current_runtime = current_runtime_for_symbol(load_runtime_registry(registry_file), symbol)
+    mode_context = "paper" if config.paper else "live"
+    if current_runtime is None or current_runtime.lifecycle_state == "stopped":
+        return _save_control_action(
+            registry_file,
+            config,
+            ManagedControlAction(
+                action_id=uuid4().hex,
+                symbol=symbol,
+                asset_class=infer_asset_class(symbol),
+                requested_action="stop",
+                mode_context=mode_context,
+                requested_at_utc=utc_now_iso(),
+                requested_from=requested_from,
+                confirmation_state="not_required",
+                outcome_state="blocked",
+                outcome_message="Runtime is already stopped.",
+                runtime_session_id="" if current_runtime is None else current_runtime.session_id,
+            ),
+        )
+
+    result = stop_managed_runtime(
+        config,
+        symbol,
+        registry_path=registry_file,
+        terminate_process=terminate_process,
+    )
+    return _save_control_action(
+        registry_file,
+        config,
+        ManagedControlAction(
+            action_id=uuid4().hex,
+            symbol=symbol,
+            asset_class=infer_asset_class(symbol),
+            requested_action="stop",
+            mode_context=mode_context,
+            requested_at_utc=utc_now_iso(),
+            requested_from=requested_from,
+            confirmation_state="not_required",
+            outcome_state=_control_outcome_from_runtime_state(result.runtime_state),
+            outcome_message=result.status_message,
+            runtime_session_id=result.previous_session_id,
+        ),
+    )
+
+
+def request_restart_runtime_action(
+    config: BotConfig,
+    symbol: str,
+    *,
+    mode: str = "live",
+    registry_path: Path | None = None,
+    terminate_process: Any = _terminate_process,
+    popen_factory: Any = subprocess.Popen,
+    cwd: Path | None = None,
+    python_executable: str | None = None,
+    requested_from: str = "dashboard",
+    confirmation_state: str = "not_required",
+) -> ManagedControlAction:
+    registry_file = Path(registry_path or config.runtime_registry_path)
+    current_runtime = current_runtime_for_symbol(load_runtime_registry(registry_file), symbol)
+    mode_context = "paper" if config.paper else "live"
+    if current_runtime is not None and current_runtime.lifecycle_state in {"starting", "stopping", "restarting"}:
+        return _save_control_action(
+            registry_file,
+            config,
+            ManagedControlAction(
+                action_id=uuid4().hex,
+                symbol=symbol,
+                asset_class=infer_asset_class(symbol),
+                requested_action="restart",
+                mode_context=mode_context,
+                requested_at_utc=utc_now_iso(),
+                requested_from=requested_from,
+                confirmation_state=confirmation_state,
+                outcome_state="blocked",
+                outcome_message=f"Runtime is currently {current_runtime.lifecycle_state}.",
+                runtime_session_id=current_runtime.session_id,
+            ),
+        )
+
+    result = restart_managed_runtime(
+        config,
+        symbol,
+        mode=mode,
+        registry_path=registry_file,
+        terminate_process=terminate_process,
+        popen_factory=popen_factory,
+        cwd=cwd,
+        python_executable=python_executable,
+    )
+    return _save_control_action(
+        registry_file,
+        config,
+        ManagedControlAction(
+            action_id=uuid4().hex,
+            symbol=symbol,
+            asset_class=infer_asset_class(symbol),
+            requested_action="restart",
+            mode_context=mode_context,
+            requested_at_utc=utc_now_iso(),
+            requested_from=requested_from,
+            confirmation_state=confirmation_state,
+            outcome_state=_control_outcome_from_runtime_state(result.runtime_state),
+            outcome_message=result.status_message,
+            runtime_session_id=result.new_session_id,
+        ),
     )

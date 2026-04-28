@@ -49,19 +49,19 @@
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Add contract coverage for dashboard control action results in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T012 [P] [US1] Add runtime-manager lifecycle tests for dashboard-issued start/stop/restart flows in `tests/unit/test_runtime_manager.py`
-- [ ] T013 [P] [US1] Add monitor payload tests for per-symbol control availability in `tests/unit/test_monitor_data.py`
-- [ ] T014 [P] [US1] Add smoke coverage for dashboard control routes in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T011 [P] [US1] Add contract coverage for dashboard control action results in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T012 [P] [US1] Add runtime-manager lifecycle tests for dashboard-issued start/stop/restart flows in `tests/unit/test_runtime_manager.py`
+- [x] T013 [P] [US1] Add monitor payload tests for per-symbol control availability in `tests/unit/test_monitor_data.py`
+- [x] T014 [P] [US1] Add smoke coverage for dashboard control routes in `tests/smoke/test_monitor_entrypoint.py`
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Add dashboard control request handlers for start/stop/restart in `tradingbot/app/monitor.py`
-- [ ] T016 [US1] Add runtime-manager action entrypoints used by the monitor in `tradingbot/app/runtime_manager.py`
-- [ ] T017 [US1] Add per-symbol control availability fields to monitor status shaping in `tradingbot/app/monitor.py`
-- [ ] T018 [US1] Render start/stop/restart controls and runtime action feedback in `templates/monitor.html`
-- [ ] T019 [US1] Keep tray/runtime summaries aligned with dashboard-issued action outcomes in `tradingbot/app/tray.py`
-- [ ] T020 [US1] Verify control affordances remain visible for both stock and crypto managed symbols in `tradingbot/app/monitor.py` and `templates/monitor.html`
+- [x] T015 [US1] Add dashboard control request handlers for start/stop/restart in `tradingbot/app/monitor.py`
+- [x] T016 [US1] Add runtime-manager action entrypoints used by the monitor in `tradingbot/app/runtime_manager.py`
+- [x] T017 [US1] Add per-symbol control availability fields to monitor status shaping in `tradingbot/app/monitor.py`
+- [x] T018 [US1] Render start/stop/restart controls and runtime action feedback in `templates/monitor.html`
+- [x] T019 [US1] Keep tray/runtime summaries aligned with dashboard-issued action outcomes in `tradingbot/app/tray.py`
+- [x] T020 [US1] Verify control affordances remain visible for both stock and crypto managed symbols in `tradingbot/app/monitor.py` and `templates/monitor.html`
 
 **Checkpoint**: User Story 1 should now allow basic dashboard lifecycle control for one managed symbol of either asset type.
 

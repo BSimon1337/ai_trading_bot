@@ -5,6 +5,7 @@ from tests.fixtures.monitor.build_fixtures import create_monitor_fixture
 from tradingbot.app.monitor import DashboardInstance
 from tradingbot.app.monitor import MonitorConfiguration
 from tradingbot.app import tray as tray_module
+from tests.conftest import make_bot_config
 
 
 def test_monitor_app_root_entrypoint_exposes_app():
@@ -164,3 +165,84 @@ def test_monitor_app_renders_mixed_sentiment_fallback_and_stale_evidence(tmp_pat
     assert "Sentiment Trend" in page_text
     assert any(item["sentiment_availability_state"] == "stale_news_scored" for item in payload["instances"])
     assert any(item["sentiment_is_fallback"] is True for item in payload["instances"])
+
+
+def test_monitor_dashboard_control_routes_accept_post_actions(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    config = make_bot_config(symbols=("BTC/USD",))
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_start_action(config, symbol, **kwargs):
+        del config
+        calls.append(("start", symbol, kwargs.get("mode", "")))
+        return {
+            "action_id": "start-1",
+            "symbol": symbol,
+            "asset_class": "crypto",
+            "requested_action": "start",
+            "mode_context": "live",
+            "requested_at_utc": "2026-04-28T02:00:00+00:00",
+            "requested_from": "dashboard",
+            "confirmation_state": "not_required",
+            "outcome_state": "succeeded",
+            "outcome_message": "Runtime is running.",
+            "runtime_session_id": "session-btc",
+        }
+
+    def fake_stop_action(config, symbol, **kwargs):
+        del config, kwargs
+        calls.append(("stop", symbol, ""))
+        return {
+            "action_id": "stop-1",
+            "symbol": symbol,
+            "asset_class": "crypto",
+            "requested_action": "stop",
+            "mode_context": "live",
+            "requested_at_utc": "2026-04-28T02:01:00+00:00",
+            "requested_from": "dashboard",
+            "confirmation_state": "not_required",
+            "outcome_state": "succeeded",
+            "outcome_message": "Runtime stopped by operator.",
+            "runtime_session_id": "session-btc",
+        }
+
+    def fake_restart_action(config, symbol, **kwargs):
+        del config
+        calls.append(("restart", symbol, kwargs.get("mode", "")))
+        return {
+            "action_id": "restart-1",
+            "symbol": symbol,
+            "asset_class": "crypto",
+            "requested_action": "restart",
+            "mode_context": "live",
+            "requested_at_utc": "2026-04-28T02:02:00+00:00",
+            "requested_from": "dashboard",
+            "confirmation_state": "not_required",
+            "outcome_state": "succeeded",
+            "outcome_message": "Runtime is running.",
+            "runtime_session_id": "session-btc-2",
+        }
+
+    client = monitor_app.create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        ),
+        config=config,
+        start_action_runner=fake_start_action,
+        stop_action_runner=fake_stop_action,
+        restart_action_runner=fake_restart_action,
+    ).test_client()
+
+    assert client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"}).status_code == 200
+    assert client.post("/control/stop", data={"symbol": "BTC/USD"}).status_code == 200
+    assert client.post("/control/restart", data={"symbol": "BTC/USD", "mode_context": "live"}).status_code == 200
+    assert calls == [("start", "BTC/USD", "live"), ("stop", "BTC/USD", ""), ("restart", "BTC/USD", "live")]

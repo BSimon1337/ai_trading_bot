@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from tests.conftest import make_bot_config
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, write_runtime_registry
 from tradingbot.app.monitor import DashboardInstance, create_app, load_monitor_configuration
 
@@ -111,6 +112,9 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert b"Recent Headlines" in page_response.data
     assert b"Sentiment Trend" in page_response.data
     assert b"Runtime State" in page_response.data
+    assert b"Start" in page_response.data
+    assert b"Stop" in page_response.data
+    assert b"Restart" in page_response.data
 
 
 def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path, monkeypatch):
@@ -190,6 +194,54 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert item["requires_live_confirmation"] is True
     assert payload["recent_control_actions"][0]["requested_action"] == "start"
     assert payload["recent_control_actions"][0]["symbol"] == "BTC/USD"
+
+
+def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    config = make_bot_config(symbols=("BTC/USD",))
+
+    def fake_start_action(config, symbol, **kwargs):
+        del config, kwargs
+        return {
+            "action_id": "start-1",
+            "symbol": symbol,
+            "asset_class": "crypto",
+            "requested_action": "start",
+            "mode_context": "live",
+            "requested_at_utc": "2026-04-28T02:00:00+00:00",
+            "requested_from": "dashboard",
+            "confirmation_state": "not_required",
+            "outcome_state": "succeeded",
+            "outcome_message": "Runtime is running.",
+            "runtime_session_id": "session-btc",
+        }
+
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="stopped",
+                runtime_mode_context="live",
+            ),
+        ),
+        config=config,
+        start_action_runner=fake_start_action,
+    )
+    client = app.test_client()
+
+    response = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["symbol"] == "BTC/USD"
+    assert payload["requested_action"] == "start"
+    assert payload["outcome_state"] == "succeeded"
+    assert payload["outcome_message"] == "Runtime is running."
 
 
 def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path):

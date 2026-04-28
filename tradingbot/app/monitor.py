@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 from flask import Flask, jsonify, render_template
+from flask import request as flask_request
 
 from tradingbot.app.runtime_manager import (
     LifecycleEvent,
@@ -18,6 +19,9 @@ from tradingbot.app.runtime_manager import (
     empty_runtime_registry,
     lifecycle_event_index,
     load_runtime_registry,
+    request_restart_runtime_action,
+    request_start_runtime_action,
+    request_stop_runtime_action,
     runtime_state_index,
 )
 from tradingbot.config.settings import BotConfig, infer_asset_class
@@ -501,6 +505,21 @@ def _load_recent_control_actions(
     if not sorted_actions:
         updated_at_utc = ""
     return ([_control_action_to_dict(action) for action in sorted_actions[:limit]], updated_at_utc)
+
+
+def _request_value(name: str, default: str = "") -> str:
+    payload = flask_request.get_json(silent=True)
+    if isinstance(payload, dict):
+        value = payload.get(name, default)
+        return str(value).strip()
+    value = flask_request.form.get(name, default)
+    return str(value).strip()
+
+
+def _control_response(action: ManagedControlAction) -> dict[str, Any]:
+    if isinstance(action, dict):
+        return action
+    return _control_action_to_dict(action)
 
 
 def redact_sensitive_values(value: Any) -> Any:
@@ -1526,6 +1545,9 @@ def create_app(
     instances: tuple[DashboardInstance, ...] | None = None,
     config: BotConfig | None = None,
     recent_control_actions: tuple[ManagedControlAction, ...] | None = None,
+    start_action_runner: Any = request_start_runtime_action,
+    stop_action_runner: Any = request_stop_runtime_action,
+    restart_action_runner: Any = request_restart_runtime_action,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
     historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT,
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
@@ -1563,5 +1585,53 @@ def create_app(
     @app.route("/api/status")
     def api_status():
         return jsonify(status_payload())
+
+    @app.route("/control/start", methods=["POST"])
+    def control_start():
+        if config is None:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "Runtime control configuration is unavailable."}), 503
+        symbol = _request_value("symbol")
+        if not symbol:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "A symbol is required."}), 400
+        mode_context = _request_value("mode_context", "paper" if config.paper else "live") or ("paper" if config.paper else "live")
+        action = start_action_runner(
+            config,
+            symbol,
+            mode="paper" if mode_context == "paper" else "live",
+            requested_from="dashboard",
+            confirmation_state="not_required",
+        )
+        return jsonify(_control_response(action))
+
+    @app.route("/control/stop", methods=["POST"])
+    def control_stop():
+        if config is None:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "Runtime control configuration is unavailable."}), 503
+        symbol = _request_value("symbol")
+        if not symbol:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "A symbol is required."}), 400
+        action = stop_action_runner(
+            config,
+            symbol,
+            requested_from="dashboard",
+        )
+        return jsonify(_control_response(action))
+
+    @app.route("/control/restart", methods=["POST"])
+    def control_restart():
+        if config is None:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "Runtime control configuration is unavailable."}), 503
+        symbol = _request_value("symbol")
+        if not symbol:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "A symbol is required."}), 400
+        mode_context = _request_value("mode_context", "paper" if config.paper else "live") or ("paper" if config.paper else "live")
+        action = restart_action_runner(
+            config,
+            symbol,
+            mode="paper" if mode_context == "paper" else "live",
+            requested_from="dashboard",
+            confirmation_state="not_required",
+        )
+        return jsonify(_control_response(action))
 
     return app
