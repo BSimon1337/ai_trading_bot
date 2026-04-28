@@ -34,6 +34,8 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "account_overview",
         "historical_context",
         "instances",
+        "recent_control_actions",
+        "latest_control_updated_at_utc",
         "issues",
         "notes",
         "recent_activity_columns",
@@ -66,6 +68,14 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "runtime_last_seen_utc",
         "last_lifecycle_event",
         "is_fresh_runtime_session",
+        "control_asset_class",
+        "control_mode_context",
+        "control_runtime_state",
+        "can_start",
+        "can_stop",
+        "can_restart",
+        "control_availability_message",
+        "requires_live_confirmation",
         "last_decision_utc",
         "last_fill_utc",
         "broker_rejection_count",
@@ -138,6 +148,21 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
                     "source": "runtime_manager",
                 }
             ],
+            "recent_control_actions": [
+                {
+                    "action_id": "btcusd-start",
+                    "symbol": "BTC/USD",
+                    "asset_class": "crypto",
+                    "requested_action": "start",
+                    "mode_context": "live",
+                    "requested_at_utc": "2026-04-28T02:00:00+00:00",
+                    "requested_from": "dashboard",
+                    "confirmation_state": "confirmed",
+                    "outcome_state": "succeeded",
+                    "outcome_message": "Runtime start succeeded.",
+                    "runtime_session_id": "session-btc",
+                }
+            ],
         },
     )
     monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
@@ -156,6 +181,15 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
     assert item["last_lifecycle_event"] == "running"
     assert item["is_fresh_runtime_session"] is True
+    assert item["control_asset_class"] == "crypto"
+    assert item["control_mode_context"] == "live"
+    assert item["control_runtime_state"] == "running"
+    assert item["can_start"] is False
+    assert item["can_stop"] is True
+    assert item["can_restart"] is True
+    assert item["requires_live_confirmation"] is True
+    assert payload["recent_control_actions"][0]["requested_action"] == "start"
+    assert payload["recent_control_actions"][0]["symbol"] == "BTC/USD"
 
 
 def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path):

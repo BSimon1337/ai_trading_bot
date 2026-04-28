@@ -17,6 +17,7 @@ from tradingbot.execution.safeguards import RuntimeGuardrailError, resolve_runti
 
 RUNTIME_REGISTRY_VERSION = 1
 DEFAULT_RECENT_SESSIONS_LIMIT = 25
+DEFAULT_RECENT_CONTROL_ACTIONS_LIMIT = 25
 
 
 def utc_now_iso() -> str:
@@ -67,12 +68,28 @@ class LifecycleEvent:
 
 
 @dataclass(frozen=True)
+class ManagedControlAction:
+    action_id: str
+    symbol: str
+    asset_class: str
+    requested_action: str
+    mode_context: str
+    requested_at_utc: str
+    requested_from: str = "dashboard"
+    confirmation_state: str = "not_required"
+    outcome_state: str = "pending"
+    outcome_message: str = ""
+    runtime_session_id: str = ""
+
+
+@dataclass(frozen=True)
 class RuntimeRegistry:
     registry_version: int = RUNTIME_REGISTRY_VERSION
     updated_at_utc: str = field(default_factory=utc_now_iso)
     managed_runtimes: tuple[ManagedRuntime, ...] = ()
     recent_sessions: tuple[RuntimeSession, ...] = ()
     lifecycle_events: tuple[LifecycleEvent, ...] = ()
+    recent_control_actions: tuple[ManagedControlAction, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -195,6 +212,22 @@ def _event_from_dict(value: dict[str, Any]) -> LifecycleEvent:
     )
 
 
+def _control_action_from_dict(value: dict[str, Any]) -> ManagedControlAction:
+    return ManagedControlAction(
+        action_id=str(value.get("action_id", "")),
+        symbol=str(value.get("symbol", "")),
+        asset_class=str(value.get("asset_class", "")),
+        requested_action=str(value.get("requested_action", "")),
+        mode_context=str(value.get("mode_context", "")),
+        requested_at_utc=str(value.get("requested_at_utc", "")),
+        requested_from=str(value.get("requested_from", "dashboard")),
+        confirmation_state=str(value.get("confirmation_state", "not_required")),
+        outcome_state=str(value.get("outcome_state", "pending")),
+        outcome_message=str(value.get("outcome_message", "")),
+        runtime_session_id=str(value.get("runtime_session_id", "")),
+    )
+
+
 def empty_runtime_registry() -> RuntimeRegistry:
     return RuntimeRegistry()
 
@@ -212,6 +245,7 @@ def runtime_registry_to_dict(registry: RuntimeRegistry) -> dict[str, Any]:
             for session in registry.recent_sessions
         ],
         "lifecycle_events": [asdict(event) for event in registry.lifecycle_events],
+        "recent_control_actions": [asdict(action) for action in registry.recent_control_actions],
     }
 
 
@@ -227,6 +261,11 @@ def runtime_registry_from_dict(payload: dict[str, Any]) -> RuntimeRegistry:
         ),
         lifecycle_events=tuple(
             _event_from_dict(item) for item in _coerce_sequence(payload.get("lifecycle_events")) if isinstance(item, dict)
+        ),
+        recent_control_actions=tuple(
+            _control_action_from_dict(item)
+            for item in _coerce_sequence(payload.get("recent_control_actions"))
+            if isinstance(item, dict)
         ),
     )
 
@@ -266,6 +305,7 @@ def register_managed_runtime(
         managed_runtimes=tuple(sorted(runtimes, key=lambda item: item.symbol)),
         recent_sessions=registry.recent_sessions,
         lifecycle_events=tuple(events[-DEFAULT_RECENT_SESSIONS_LIMIT:]),
+        recent_control_actions=registry.recent_control_actions,
     )
 
 
@@ -284,6 +324,26 @@ def add_runtime_session(
         managed_runtimes=registry.managed_runtimes,
         recent_sessions=tuple(sessions[-recent_limit:]),
         lifecycle_events=registry.lifecycle_events,
+        recent_control_actions=registry.recent_control_actions,
+    )
+
+
+def add_control_action(
+    registry: RuntimeRegistry,
+    action: ManagedControlAction,
+    *,
+    recent_limit: int = DEFAULT_RECENT_CONTROL_ACTIONS_LIMIT,
+) -> RuntimeRegistry:
+    recent_limit = _coerce_recent_limit(recent_limit)
+    actions = [item for item in registry.recent_control_actions if item.action_id != action.action_id]
+    actions.append(action)
+    return RuntimeRegistry(
+        registry_version=registry.registry_version,
+        updated_at_utc=utc_now_iso(),
+        managed_runtimes=registry.managed_runtimes,
+        recent_sessions=registry.recent_sessions,
+        lifecycle_events=registry.lifecycle_events,
+        recent_control_actions=tuple(actions[-recent_limit:]),
     )
 
 

@@ -205,9 +205,11 @@ What the runtime manager preserves:
 
 What it does not do yet:
 
-- interactive dashboard controls
+- interactive dashboard controls for start/stop/restart from the monitor UI
 - bulk process supervision beyond the local runtime registry
 - a separate approval path for live trading
+
+The next planned app layer is interactive dashboard control on top of the runtime manager. That work is intended to cover both stock and crypto managed symbols through one shared operator workflow rather than growing a crypto-only control path.
 
 Generated runtime evidence:
 

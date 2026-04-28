@@ -36,6 +36,32 @@ def write_runtime_registry(path: Path, payload: dict[str, object]) -> Path:
     return path
 
 
+def recent_control_action(
+    symbol: str = "SPY",
+    *,
+    requested_action: str = "start",
+    mode_context: str = "paper",
+    outcome_state: str = "succeeded",
+    asset_class: str | None = None,
+    **overrides,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "action_id": f"{symbol.replace('/', '').lower()}-{requested_action}",
+        "symbol": symbol,
+        "asset_class": asset_class or ("crypto" if "/" in symbol else "stock"),
+        "requested_action": requested_action,
+        "mode_context": mode_context,
+        "requested_at_utc": datetime.now(timezone.utc).isoformat(),
+        "requested_from": "dashboard",
+        "confirmation_state": "confirmed" if mode_context == "live" else "not_required",
+        "outcome_state": outcome_state,
+        "outcome_message": f"{requested_action.title()} {outcome_state}.",
+        "runtime_session_id": f"session-{symbol.replace('/', '').lower()}",
+    }
+    row.update(overrides)
+    return row
+
+
 def recent_decision(symbol: str = "SPY", **overrides) -> dict[str, object]:
     row: dict[str, object] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

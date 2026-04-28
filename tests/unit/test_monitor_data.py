@@ -8,6 +8,7 @@ import pandas as pd
 from tests.conftest import make_bot_config
 from tests.fixtures.monitor.build_fixtures import (
     create_monitor_fixture,
+    recent_control_action,
     recent_decision,
     write_decisions,
     write_malformed_csv,
@@ -244,6 +245,9 @@ def test_load_monitor_configuration_merges_runtime_registry_state(tmp_path, monk
             ],
             "recent_sessions": [],
             "lifecycle_events": [],
+            "recent_control_actions": [
+                recent_control_action(symbol="BTC/USD", requested_action="start", mode_context="live"),
+            ],
         },
     )
     monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
@@ -252,6 +256,7 @@ def test_load_monitor_configuration_merges_runtime_registry_state(tmp_path, monk
     instance = config.instances[0]
 
     assert config.runtime_registry_path == runtime_registry_path
+    assert len(config.recent_control_actions) == 1
     assert instance.runtime_state == "running"
     assert instance.runtime_session_id == "session-btc"
     assert instance.runtime_pid == 2468
@@ -320,6 +325,102 @@ def test_dashboard_status_includes_runtime_registry_fields_on_instance_payload(t
     assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
     assert item["last_lifecycle_event"] == "running"
     assert item["is_fresh_runtime_session"] is True
+
+
+def test_dashboard_status_includes_control_availability_fields_per_instance(tmp_path):
+    running_paths = create_monitor_fixture(tmp_path / "running", "healthy", symbol="BTC/USD")
+    stopped_paths = create_monitor_fixture(tmp_path / "stopped", "stale", symbol="SPY")
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=running_paths["decisions"],
+                fill_log_path=running_paths["fills"],
+                snapshot_log_path=running_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="SPY",
+                symbols=("SPY",),
+                asset_classes=("stock",),
+                decision_log_path=stopped_paths["decisions"],
+                fill_log_path=stopped_paths["fills"],
+                snapshot_log_path=stopped_paths["snapshot"],
+                runtime_state="stopped",
+                runtime_mode_context="paper",
+            ),
+        )
+    )
+
+    running_item = next(item for item in payload["instances"] if item["label"] == "BTC/USD")
+    stopped_item = next(item for item in payload["instances"] if item["label"] == "SPY")
+
+    assert running_item["control_asset_class"] == "crypto"
+    assert running_item["control_mode_context"] == "live"
+    assert running_item["control_runtime_state"] == "running"
+    assert running_item["can_start"] is False
+    assert running_item["can_stop"] is True
+    assert running_item["can_restart"] is True
+    assert running_item["requires_live_confirmation"] is True
+
+    assert stopped_item["control_asset_class"] == "stock"
+    assert stopped_item["control_mode_context"] == "paper"
+    assert stopped_item["control_runtime_state"] == "stopped"
+    assert stopped_item["can_start"] is True
+    assert stopped_item["can_stop"] is False
+    assert stopped_item["can_restart"] is True
+    assert stopped_item["requires_live_confirmation"] is False
+
+
+def test_dashboard_status_includes_recent_control_actions_from_runtime_registry(tmp_path, monkeypatch):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-28T02:00:00+00:00",
+            "managed_runtimes": [],
+            "recent_sessions": [],
+            "lifecycle_events": [],
+            "recent_control_actions": [
+                recent_control_action(
+                    symbol="SPY",
+                    requested_action="start",
+                    mode_context="paper",
+                    requested_at_utc="2026-04-28T01:59:00+00:00",
+                ),
+                recent_control_action(
+                    symbol="BTC/USD",
+                    requested_action="restart",
+                    mode_context="live",
+                    requested_at_utc="2026-04-28T02:00:00+00:00",
+                ),
+            ],
+        },
+    )
+    monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+            ),
+        )
+    )
+
+    assert payload["latest_control_updated_at_utc"] == "2026-04-28T02:00:00+00:00"
+    assert [item["symbol"] for item in payload["recent_control_actions"]] == ["BTC/USD", "SPY"]
+    assert payload["recent_control_actions"][0]["requested_action"] == "restart"
 
 
 def test_dashboard_status_keeps_stop_and_failure_runtime_messages_visible(tmp_path):
