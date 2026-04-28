@@ -6,7 +6,13 @@ from pathlib import Path
 import pandas as pd
 
 from tests.conftest import make_bot_config
-from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, recent_decision, write_decisions, write_malformed_csv
+from tests.fixtures.monitor.build_fixtures import (
+    create_monitor_fixture,
+    recent_decision,
+    write_decisions,
+    write_malformed_csv,
+    write_runtime_registry,
+)
 from tradingbot.app.monitor import (
     DEFAULT_HEADLINE_PREVIEW_LIMIT,
     VALUE_SOURCE_SNAPSHOT_DELTA,
@@ -212,6 +218,74 @@ def test_dashboard_status_extracts_current_per_symbol_sentiment_snapshot(tmp_pat
     assert item["sentiment_availability_state"] == "news_scored"
     assert item["sentiment_is_fallback"] is False
     assert item["sentiment_last_updated_utc"]
+
+
+def test_load_monitor_configuration_merges_runtime_registry_state(tmp_path, monkeypatch):
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-28T02:00:00+00:00",
+            "managed_runtimes": [
+                {
+                    "symbol": "BTC/USD",
+                    "instance_label": "BTC/USD",
+                    "mode": "live",
+                    "lifecycle_state": "running",
+                    "session_id": "session-btc",
+                    "pid": 2468,
+                    "started_at_utc": "2026-04-28T01:55:00+00:00",
+                    "last_seen_utc": "2026-04-28T02:00:00+00:00",
+                    "decision_log_path": "logs/paper_validation_btcusd/decisions.csv",
+                    "fill_log_path": "logs/paper_validation_btcusd/fills.csv",
+                    "snapshot_log_path": "logs/paper_validation_btcusd/daily_snapshot.csv",
+                }
+            ],
+            "recent_sessions": [],
+            "lifecycle_events": [],
+        },
+    )
+    monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
+
+    config = load_monitor_configuration(symbols=("BTC/USD",))
+    instance = config.instances[0]
+
+    assert config.runtime_registry_path == runtime_registry_path
+    assert instance.runtime_state == "running"
+    assert instance.runtime_session_id == "session-btc"
+    assert instance.runtime_pid == 2468
+    assert instance.runtime_started_at_utc == "2026-04-28T01:55:00+00:00"
+
+
+def test_summarize_instance_preserves_runtime_registry_metadata(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_status_message="running",
+        runtime_session_id="session-btc",
+        runtime_pid=2468,
+        runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+        runtime_last_seen_utc="2026-04-28T02:00:00+00:00",
+        last_lifecycle_event="started",
+        is_fresh_runtime_session=True,
+    )
+
+    summary = summarize_instance(instance)
+
+    assert summary.runtime_state == "running"
+    assert summary.runtime_session_id == "session-btc"
+    assert summary.runtime_pid == 2468
+    assert summary.runtime_started_at_utc == "2026-04-28T01:55:00+00:00"
+    assert summary.runtime_last_seen_utc == "2026-04-28T02:00:00+00:00"
+    assert summary.last_lifecycle_event == "started"
+    assert summary.is_fresh_runtime_session is True
 
 
 def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_path):

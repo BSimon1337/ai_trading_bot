@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 from flask import Flask, jsonify, render_template
 
+from tradingbot.app.runtime_manager import ManagedRuntime, empty_runtime_registry, load_runtime_registry, runtime_state_index
 from tradingbot.config.settings import BotConfig, infer_asset_class
 from tradingbot.sentiment.scoring import sentiment_availability_state
 
@@ -160,6 +161,14 @@ class DashboardInstance:
     notes: tuple[NoteSummary, ...] = ()
     evidence_scope: str = "active"
     historical_issues: tuple[IssueSummary, ...] = ()
+    runtime_state: str = ""
+    runtime_status_message: str = ""
+    runtime_session_id: str = ""
+    runtime_pid: int | None = None
+    runtime_started_at_utc: str = ""
+    runtime_last_seen_utc: str = ""
+    last_lifecycle_event: str = ""
+    is_fresh_runtime_session: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,6 +181,7 @@ class MonitorConfiguration:
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS
     tray_enabled: bool = True
     read_only: bool = True
+    runtime_registry_path: Path = Path("logs/runtime/runtime_registry.json")
     instances: tuple[DashboardInstance, ...] = ()
 
 
@@ -280,6 +290,7 @@ def discover_monitor_instances(
     config: BotConfig | None = None,
     symbols: tuple[str, ...] | None = None,
     base_dir: Path = Path("logs"),
+    runtime_index: dict[str, ManagedRuntime] | None = None,
 ) -> tuple[DashboardInstance, ...]:
     if symbols is None and config is not None:
         symbols = config.symbols
@@ -295,6 +306,7 @@ def discover_monitor_instances(
             snapshot_path = Path(config.daily_snapshot_path)
         else:
             decision_path, fill_path, snapshot_path = _paths_for_symbol(symbol, base_dir=base_dir)
+        runtime = (runtime_index or {}).get(symbol)
         instances.append(
             DashboardInstance(
                 label=symbol,
@@ -303,9 +315,26 @@ def discover_monitor_instances(
                 decision_log_path=decision_path,
                 fill_log_path=fill_path,
                 snapshot_log_path=snapshot_path,
+                runtime_state="" if runtime is None else runtime.lifecycle_state,
+                runtime_status_message=""
+                if runtime is None
+                else runtime.failure_reason or runtime.lifecycle_state.replace("_", " "),
+                runtime_session_id="" if runtime is None else runtime.session_id,
+                runtime_pid=None if runtime is None else runtime.pid,
+                runtime_started_at_utc="" if runtime is None else runtime.started_at_utc,
+                runtime_last_seen_utc="" if runtime is None else runtime.last_seen_utc,
+                is_fresh_runtime_session=bool(runtime and runtime.lifecycle_state in {"starting", "running", "restarting"}),
             )
         )
     return tuple(instances)
+
+
+def load_runtime_index(runtime_registry_path: Path) -> dict[str, ManagedRuntime]:
+    try:
+        registry = load_runtime_registry(runtime_registry_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        registry = empty_runtime_registry()
+    return runtime_state_index(registry)
 
 
 def load_monitor_configuration(
@@ -320,11 +349,18 @@ def load_monitor_configuration(
     historical_issue_limit = _safe_int(os.getenv("MONITOR_HISTORICAL_ISSUE_LIMIT"), DEFAULT_HISTORY_ISSUE_LIMIT)
     dashboard_host = os.getenv("MONITOR_HOST", "127.0.0.1").strip() or "127.0.0.1"
     tray_enabled = os.getenv("MONITOR_TRAY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    runtime_registry_path = Path(
+        os.getenv(
+            "RUNTIME_REGISTRY_PATH",
+            config.runtime_registry_path if config is not None else "logs/runtime/runtime_registry.json",
+        )
+    )
     archive_markers = tuple(
         marker.strip().lower()
         for marker in os.getenv("MONITOR_ARCHIVE_MARKERS", ",".join(DEFAULT_ARCHIVE_MARKERS)).split(",")
         if marker.strip()
     ) or DEFAULT_ARCHIVE_MARKERS
+    runtime_index = load_runtime_index(runtime_registry_path)
     return MonitorConfiguration(
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -334,7 +370,8 @@ def load_monitor_configuration(
         archive_markers=archive_markers,
         tray_enabled=tray_enabled,
         read_only=True,
-        instances=discover_monitor_instances(config=config, symbols=symbols, base_dir=base_dir),
+        runtime_registry_path=runtime_registry_path,
+        instances=discover_monitor_instances(config=config, symbols=symbols, base_dir=base_dir, runtime_index=runtime_index),
     )
 
 
@@ -1043,6 +1080,14 @@ def summarize_instance(
         notes=tuple(notes),
         evidence_scope=evidence_scope,
         historical_issues=tuple(historical_issues),
+        runtime_state=instance.runtime_state,
+        runtime_status_message=instance.runtime_status_message,
+        runtime_session_id=instance.runtime_session_id,
+        runtime_pid=instance.runtime_pid,
+        runtime_started_at_utc=instance.runtime_started_at_utc,
+        runtime_last_seen_utc=instance.runtime_last_seen_utc,
+        last_lifecycle_event=instance.last_lifecycle_event,
+        is_fresh_runtime_session=instance.is_fresh_runtime_session,
     )
 
 

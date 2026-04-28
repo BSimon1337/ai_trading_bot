@@ -29,13 +29,13 @@
 
 **Critical**: No user story work should start until the runtime-manager state model and monitor wiring points are in place.
 
-- [ ] T004 Implement managed runtime, runtime session, and runtime registry dataclasses in `tradingbot/app/runtime_manager.py`
-- [ ] T005 Implement local runtime-registry load/save helpers and bounded recent-session handling in `tradingbot/app/runtime_manager.py`
-- [ ] T006 [P] Add runtime-manager configuration fields and defaults for registry/state paths in `tradingbot/config/settings.py`
-- [ ] T007 [P] Add foundational unit tests for runtime-registry serialization and state transitions in `tests/unit/test_runtime_manager.py`
-- [ ] T008 [P] Add runtime-manager monitor fixture builders and sample registry evidence in `tests/fixtures/monitor/build_fixtures.py`
-- [ ] T009 Add monitor-side registry loading and base runtime-state merge helpers in `tradingbot/app/monitor.py`
-- [ ] T010 [P] Add foundational monitor payload tests for runtime-state parsing in `tests/unit/test_monitor_data.py`
+- [x] T004 Implement managed runtime, runtime session, and runtime registry dataclasses in `tradingbot/app/runtime_manager.py`
+- [x] T005 Implement local runtime-registry load/save helpers and bounded recent-session handling in `tradingbot/app/runtime_manager.py`
+- [x] T006 [P] Add runtime-manager configuration fields and defaults for registry/state paths in `tradingbot/config/settings.py`
+- [x] T007 [P] Add foundational unit tests for runtime-registry serialization and state transitions in `tests/unit/test_runtime_manager.py`
+- [x] T008 [P] Add runtime-manager monitor fixture builders and sample registry evidence in `tests/fixtures/monitor/build_fixtures.py`
+- [x] T009 Add monitor-side registry loading and base runtime-state merge helpers in `tradingbot/app/monitor.py`
+- [x] T010 [P] Add foundational monitor payload tests for runtime-state parsing in `tests/unit/test_monitor_data.py`
 
 **Checkpoint**: Shared runtime-manager state and monitor integration primitives are ready for lifecycle features.
 

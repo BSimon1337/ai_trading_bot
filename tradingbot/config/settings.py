@@ -108,6 +108,8 @@ class BotConfig:
     live_trading_enabled: bool
     live_run_confirmation: str
     live_confirmation_token: str
+    runtime_registry_path: str = "logs/runtime/runtime_registry.json"
+    runtime_recent_sessions_limit: int = 25
     offline_news_enabled: bool = False
     offline_news_dir: str = "data/offline_news"
 
@@ -219,6 +221,9 @@ def load_config() -> BotConfig:
         live_trading_enabled=live_enabled,
         live_run_confirmation=os.getenv("LIVE_RUN_CONFIRMATION", "").strip(),
         live_confirmation_token=os.getenv("LIVE_CONFIRMATION_TOKEN", "CONFIRM").strip() or "CONFIRM",
+        runtime_registry_path=os.getenv("RUNTIME_REGISTRY_PATH", "logs/runtime/runtime_registry.json").strip()
+        or "logs/runtime/runtime_registry.json",
+        runtime_recent_sessions_limit=_get_int("RUNTIME_RECENT_SESSIONS_LIMIT", 25),
         offline_news_enabled=_get_bool("OFFLINE_NEWS_ENABLED", False),
         offline_news_dir=os.getenv("OFFLINE_NEWS_DIR", "data/offline_news").strip() or "data/offline_news",
     )
