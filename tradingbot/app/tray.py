@@ -24,6 +24,8 @@ TRAY_STATE_META = {
     "live": ("AI Trading Bot Monitor (Live)", "Live evidence is updating.", "#27AE60"),
     "paper": ("AI Trading Bot Monitor (Paper)", "Paper evidence is updating.", "#2980B9"),
     "running": ("AI Trading Bot Monitor (Running)", "Monitor evidence is updating.", "#16A085"),
+    "stopped": ("AI Trading Bot Monitor (Stopped)", "Managed runtimes are stopped.", "#7F8C8D"),
+    "paused": ("AI Trading Bot Monitor (Paused)", "A managed runtime is paused.", "#F39C12"),
     "unavailable": ("AI Trading Bot Monitor", "Tray monitor is unavailable.", "#7F8C8D"),
 }
 

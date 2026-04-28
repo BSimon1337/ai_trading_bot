@@ -351,6 +351,63 @@ def test_dashboard_status_keeps_stop_and_failure_runtime_messages_visible(tmp_pa
     assert item["last_lifecycle_event"] == "stopped"
 
 
+def test_dashboard_status_distinguishes_stopped_runtime_from_stale_logs(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "stale", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="stopped",
+                runtime_status_message="Runtime stopped by operator.",
+                runtime_session_id="session-btc",
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:10:00+00:00",
+                last_lifecycle_event="stopped",
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["status"]["state"] == "stopped"
+    assert item["status"]["message"] == "Runtime stopped by operator."
+    assert payload["aggregate_state"] == "stopped"
+
+
+def test_dashboard_status_prefers_fresh_runtime_session_over_older_failed_logs(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "failed", symbol="BTC/USD")
+    runtime_started_at = (datetime.now(timezone.utc) + pd.Timedelta(minutes=1)).isoformat()
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_status_message="Runtime is running.",
+                runtime_session_id="session-btc-new",
+                runtime_pid=4567,
+                runtime_started_at_utc=runtime_started_at,
+                runtime_last_seen_utc=runtime_started_at,
+                last_lifecycle_event="restarted",
+                is_fresh_runtime_session=True,
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["status"]["state"] == "running"
+    assert item["runtime_status_message"] == "Runtime is running."
+    assert item["last_lifecycle_event"] == "restarted"
+
+
 def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_path):
     fallback_paths = create_monitor_fixture(tmp_path / "fallback", "healthy", symbol="BTC/USD")
     real_paths = create_monitor_fixture(tmp_path / "real", "healthy", symbol="ETH/USD")

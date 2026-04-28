@@ -61,6 +61,8 @@
     .failed { color: var(--bad); background: rgba(239,68,68,.18); }
     .stale { color: var(--bad); background: rgba(239,68,68,.15); }
     .no_data { color: var(--warn); background: rgba(245,158,11,.14); }
+    .stopped { color: var(--muted); background: rgba(148,163,184,.14); }
+    .paused { color: var(--warn); background: rgba(245,158,11,.18); }
     .warning { color: var(--warn); background: rgba(245,158,11,.16); }
     .issue-critical { color: var(--bad); }
     .issue-warning { color: var(--warn); }
@@ -409,6 +411,10 @@
           {% if instance.runtime_status_message %}
           | {{ instance.runtime_status_message }}
           {% endif %}
+        </p>
+        <p class="muted" style="margin: 8px 0 0 0;">
+          lifecycle {{ instance.last_lifecycle_event or "unavailable" }}
+          | session {{ instance.runtime_session_id or "unavailable" }}
         </p>
         <p class="muted" style="margin: 8px 0 0 0;">
           heartbeat

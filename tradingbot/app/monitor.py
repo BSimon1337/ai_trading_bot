@@ -812,6 +812,18 @@ def _parse_instance_timestamp(value: str | None) -> pd.Timestamp | None:
     return timestamp
 
 
+def _filter_runtime_session_evidence(
+    dataframe: pd.DataFrame,
+    runtime_started_at_utc: str,
+) -> pd.DataFrame:
+    if dataframe.empty or "timestamp" not in dataframe.columns or not runtime_started_at_utc:
+        return dataframe
+    runtime_started_at = _parse_instance_timestamp(runtime_started_at_utc)
+    if runtime_started_at is None:
+        return dataframe
+    return dataframe[dataframe["timestamp"] >= runtime_started_at]
+
+
 def _select_authoritative_account_instance(
     instances: list[DashboardInstance],
     *,
@@ -870,15 +882,39 @@ def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
 
 
 def _classify_status(
+    instance: DashboardInstance,
     latest_decision: DecisionSummary | None,
     issues: list[IssueSummary],
     age_minutes: float | None,
     stale_after_minutes: int,
 ) -> RuntimeStatus:
+    runtime_state = instance.runtime_state
+    runtime_message = instance.runtime_status_message or "Runtime state updated by runtime manager."
+    if runtime_state == "failed":
+        return RuntimeStatus("failed", "critical", runtime_message, age_minutes)
+    if runtime_state == "blocked":
+        return RuntimeStatus("blocked", "critical", runtime_message, age_minutes)
+    if runtime_state == "paused":
+        return RuntimeStatus("paused", "warning", runtime_message, age_minutes)
+    if runtime_state == "stopped":
+        return RuntimeStatus("stopped", "info", runtime_message, age_minutes)
+    if runtime_state == "stopping":
+        return RuntimeStatus("stopped", "warning", runtime_message, age_minutes)
+    if runtime_state in {"starting", "restarting"}:
+        return RuntimeStatus("running", "info", runtime_message, age_minutes)
+
     if latest_decision is None:
+        if runtime_state == "running":
+            return RuntimeStatus("running", "info", runtime_message, age_minutes)
         return RuntimeStatus("no_data", "warning", "No runtime evidence found.", age_minutes)
     live_like = latest_decision.mode in {"active-live", "live"}
     paper_like = latest_decision.mode == "paper"
+    if runtime_state == "running":
+        if live_like:
+            return RuntimeStatus("live", "ok", runtime_message or "Managed live runtime is running.", age_minutes)
+        if paper_like:
+            return RuntimeStatus("paper", "info", runtime_message or "Managed paper runtime is running.", age_minutes)
+        return RuntimeStatus("running", "ok", runtime_message, age_minutes)
     if latest_decision.mode == "blocked-live" or latest_decision.result == "blocked":
         return RuntimeStatus("blocked", "critical", latest_decision.reason or "Live run was blocked.", age_minutes)
     if latest_decision.result == "failed":
@@ -1032,6 +1068,10 @@ def summarize_instance(
     decisions = normalize_timestamps(decision_result.dataframe)
     fills = normalize_timestamps(fill_result.dataframe)
     snapshot = _normalize_snapshot_frame(snapshot_result.dataframe)
+    if instance.is_fresh_runtime_session and instance.runtime_started_at_utc:
+        decisions = _filter_runtime_session_evidence(decisions, instance.runtime_started_at_utc)
+        fills = _filter_runtime_session_evidence(fills, instance.runtime_started_at_utc)
+        snapshot = _filter_runtime_session_evidence(snapshot, instance.runtime_started_at_utc)
     active_decisions = _filter_active_evidence(decisions, active_minutes=stale_after_minutes)
     active_fills = _filter_active_evidence(fills, active_minutes=stale_after_minutes)
     active_snapshot = _filter_active_evidence(snapshot, active_minutes=stale_after_minutes)
@@ -1081,7 +1121,7 @@ def summarize_instance(
         historical_issue_limit=historical_issue_limit,
     )
     notes = _notes_from_evidence(active_decisions, active_fills, active_snapshot)
-    status = _classify_status(latest_decision, issues, age, stale_after_minutes)
+    status = _classify_status(instance, latest_decision, issues, age, stale_after_minutes)
     return DashboardInstance(
         label=instance.label,
         symbols=instance.symbols,
@@ -1233,13 +1273,17 @@ def _aggregate_state(instances: list[DashboardInstance]) -> str:
     states = {instance.status.state for instance in considered}
     if not considered:
         return "no_data"
-    for state in ("failed", "blocked", "stale", "no_data"):
+    for state in ("failed", "blocked", "paused", "stale", "no_data"):
         if state in states:
             return state
     if "live" in states:
         return "live"
     if "paper" in states:
         return "paper"
+    if "running" in states:
+        return "running"
+    if "stopped" in states:
+        return "stopped"
     return "running"
 
 

@@ -158,6 +158,72 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert item["is_fresh_runtime_session"] is True
 
 
+def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "stale", symbol="BTC/USD")
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="stopped",
+                runtime_status_message="Runtime stopped by operator.",
+                runtime_session_id="session-btc",
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:10:00+00:00",
+                last_lifecycle_event="stopped",
+                is_fresh_runtime_session=False,
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert payload["aggregate_state"] == "stopped"
+    assert payload["instances"][0]["status"]["state"] == "stopped"
+    assert "Runtime stopped by operator." in page_text
+    assert "lifecycle stopped" in page_text
+
+
+def test_dashboard_contract_prefers_fresh_runtime_session_over_old_failed_logs(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "failed", symbol="BTC/USD")
+    runtime_started_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_status_message="Runtime is running.",
+                runtime_session_id="session-btc-new",
+                runtime_pid=4567,
+                runtime_started_at_utc=runtime_started_at,
+                runtime_last_seen_utc=runtime_started_at,
+                last_lifecycle_event="restarted",
+                is_fresh_runtime_session=True,
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert payload["aggregate_state"] == "running"
+    assert payload["instances"][0]["status"]["state"] == "running"
+    assert payload["instances"][0]["is_fresh_runtime_session"] is True
+    assert "fresh session" in page_text
+
+
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):
     instance = DashboardInstance(
         label="ETH/USD",

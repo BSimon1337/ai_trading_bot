@@ -145,3 +145,20 @@ def test_tray_state_mapping_reports_running_and_failed_runtime_counts():
     assert "Running runtimes: 1." in state.tooltip
     assert "Failed runtimes: 1." in state.tooltip
     assert "Runtime refresh: 2026-04-19T12:00:00+00:00." in state.tooltip
+
+
+def test_tray_state_mapping_handles_stopped_runtime_aggregate_state():
+    payload = {
+        "status_updated_utc": "2026-04-19 12:00:00 UTC",
+        "aggregate_state": "stopped",
+        "instances": [{"label": "BTC/USD", "runtime_state": "stopped", "runtime_last_seen_utc": "2026-04-19T11:59:00+00:00"}],
+        "issues": [],
+        "notes": [],
+        "historical_context": {"historical_issue_count": 0},
+    }
+
+    state = tray_state_from_dashboard(payload)
+
+    assert state.state == "stopped"
+    assert state.label.endswith("(Stopped)")
+    assert "Running runtimes: 0." in state.tooltip

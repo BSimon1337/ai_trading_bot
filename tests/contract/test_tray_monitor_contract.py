@@ -188,3 +188,30 @@ def test_tray_monitor_contract_reports_runtime_counts_without_changing_read_only
     assert result["state"] == "live"
     assert "Running runtimes: 1." in controller.state.tooltip
     assert "Failed runtimes: 1." in controller.state.tooltip
+
+
+def test_tray_monitor_contract_distinguishes_stopped_runtime_state_from_stale_monitoring():
+    controller, result = start_monitor_tray(
+        config=MonitorConfiguration(dashboard_host="127.0.0.1", dashboard_port=8080, instances=()),
+        payload_loader=lambda: {
+            "status_updated_utc": "2026-04-19 12:00:00 UTC",
+            "aggregate_state": "stopped",
+            "instances": [
+                {"label": "BTC/USD", "runtime_state": "stopped", "runtime_last_seen_utc": "2026-04-19T11:59:00+00:00"},
+            ],
+            "issues": [],
+            "notes": [],
+            "historical_context": {"historical_issue_count": 0},
+        },
+        browser_opener=lambda url: True,
+        dependencies=TrayDependencies(
+            available=True,
+            pystray=FakePystray,
+            image_module=FakeImage,
+            image_draw_module=FakeImageDraw,
+        ),
+    )
+
+    assert result["state"] == "stopped"
+    assert "Managed runtimes are stopped." in controller.state.tooltip
+    assert "Running runtimes: 0." in controller.state.tooltip

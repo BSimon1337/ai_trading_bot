@@ -101,16 +101,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T031 [P] [US3] Add unit tests for stopped-versus-stale runtime interpretation in `tests/unit/test_monitor_data.py`
-- [ ] T032 [P] [US3] Add contract tests for runtime-manager monitor fields and fresh-session behavior in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T033 [P] [US3] Add tray contract coverage for aggregate runtime-state signaling in `tests/contract/test_tray_monitor_contract.py`
+- [x] T031 [P] [US3] Add unit tests for stopped-versus-stale runtime interpretation in `tests/unit/test_monitor_data.py`
+- [x] T032 [P] [US3] Add contract tests for runtime-manager monitor fields and fresh-session behavior in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T033 [P] [US3] Add tray contract coverage for aggregate runtime-state signaling in `tests/contract/test_tray_monitor_contract.py`
 
 ### Implementation for User Story 3
 
-- [ ] T034 [US3] Add runtime-state classification helpers and stale-session precedence rules in `tradingbot/app/monitor.py`
-- [ ] T035 [US3] Update dashboard cards and detail sections to show runtime state, last lifecycle event, and fresh-session context in `templates/monitor.html`
-- [ ] T036 [US3] Update tray text and aggregate-state behavior for runtime-manager visibility in `tradingbot/app/tray.py`
-- [ ] T037 [US3] Validate User Story 3 by running `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, `tests/contract/test_tray_monitor_contract.py`, and `tests/smoke/test_monitor_entrypoint.py`
+- [x] T034 [US3] Add runtime-state classification helpers and stale-session precedence rules in `tradingbot/app/monitor.py`
+- [x] T035 [US3] Update dashboard cards and detail sections to show runtime state, last lifecycle event, and fresh-session context in `templates/monitor.html`
+- [x] T036 [US3] Update tray text and aggregate-state behavior for runtime-manager visibility in `tradingbot/app/tray.py`
+- [x] T037 [US3] Validate User Story 3 by running `tests/unit/test_monitor_data.py`, `tests/contract/test_dashboard_monitor_contract.py`, `tests/contract/test_tray_monitor_contract.py`, and `tests/smoke/test_monitor_entrypoint.py`
 
 **Checkpoint**: The monitor can explain managed runtime state clearly instead of leaving operators to infer it from stale evidence.
 
