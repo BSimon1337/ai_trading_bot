@@ -278,6 +278,67 @@ def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_p
     assert real_item["sentiment_is_fallback"] is False
 
 
+def test_dashboard_status_uses_last_valid_sentiment_during_guardrail_lockout(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    write_decisions(
+        paths["decisions"],
+        [
+            _sentiment_row(
+                symbol="ETH/USD",
+                timestamp="2026-04-26T15:00:00+00:00",
+                action="buy",
+                action_source="model",
+                sentiment_label="positive",
+                sentiment_probability="0.88",
+                sentiment_source="external",
+                sentiment_availability_state="news_scored",
+                sentiment_is_fallback="false",
+                reason="submitted",
+                result="submitted",
+            ),
+            recent_decision(
+                symbol="ETH/USD",
+                timestamp="2026-04-26T15:15:00+00:00",
+                mode="live",
+                asset_class="crypto",
+                action="hold",
+                action_source="guardrail",
+                sentiment_source="",
+                sentiment_probability="",
+                sentiment_label="",
+                sentiment_availability_state="",
+                sentiment_is_fallback="",
+                sentiment_observed_at="",
+                headline_count="",
+                headline_preview="",
+                sentiment_window_start="",
+                sentiment_window_end="",
+                quantity="0",
+                portfolio_value="99.24",
+                cash="99.24",
+                reason="max_consecutive_losses_lockout_until_next_day_3",
+                result="skipped",
+            ),
+        ],
+    )
+    instance = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["latest_reason"] == "max_consecutive_losses_lockout_until_next_day_3"
+    assert item["sentiment_label"] == "positive"
+    assert item["sentiment_probability"] == 0.88
+    assert item["sentiment_availability_state"] == "news_scored"
+
+
 def test_dashboard_status_exposes_bounded_headline_preview_per_instance(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
     write_decisions(

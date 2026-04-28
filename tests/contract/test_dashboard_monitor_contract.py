@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture
 from tradingbot.app.monitor import DashboardInstance, create_app
@@ -235,13 +235,16 @@ def test_dashboard_contract_exposes_active_and_historical_context_separately(tmp
 
 
 def test_dashboard_contract_renders_stale_and_no_headline_sentiment_states(tmp_path):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    stale_observed_at = (now - timedelta(hours=5)).isoformat()
+    fresh_observed_at = now.isoformat()
     stale_paths = create_monitor_fixture(tmp_path / "stale_sentiment", "healthy", symbol="BTC/USD")
     fallback_paths = create_monitor_fixture(tmp_path / "no_headlines", "healthy", symbol="ETH/USD")
     stale_paths["decisions"].write_text(
         "\n".join(
             [
                 "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,sentiment_availability_state,sentiment_is_fallback,sentiment_observed_at,headline_count,headline_preview,sentiment_window_start,sentiment_window_end,quantity,portfolio_value,cash,reason,result",
-                "2026-04-26T15:00:00+00:00,live,BTC/USD,crypto,hold,model,0.7,external,0.8,positive,news_scored,false,2026-04-26T10:00:00+00:00,3,\"[\"\"H1\"\",\"\"H2\"\",\"\"H3\"\"]\",2026-04-23,2026-04-26,0,100,90,hold,skipped",
+                f"{now.isoformat()},live,BTC/USD,crypto,hold,model,0.7,external,0.8,positive,news_scored,false,{stale_observed_at},3,\"[\"\"H1\"\",\"\"H2\"\",\"\"H3\"\"]\",2026-04-23,2026-04-26,0,100,90,hold,skipped",
             ]
         ),
         encoding="utf-8",
@@ -250,7 +253,7 @@ def test_dashboard_contract_renders_stale_and_no_headline_sentiment_states(tmp_p
         "\n".join(
             [
                 "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,sentiment_availability_state,sentiment_is_fallback,sentiment_observed_at,headline_count,headline_preview,sentiment_window_start,sentiment_window_end,quantity,portfolio_value,cash,reason,result",
-                "2026-04-26T15:00:00+00:00,live,ETH/USD,crypto,hold,model,0.6,external,0.0,neutral,,false,2026-04-26T15:00:00+00:00,0,[],2026-04-23,2026-04-26,0,100,90,hold,skipped",
+                f"{now.isoformat()},live,ETH/USD,crypto,hold,model,0.6,external,0.0,neutral,,false,{fresh_observed_at},0,[],2026-04-23,2026-04-26,0,100,90,hold,skipped",
             ]
         ),
         encoding="utf-8",

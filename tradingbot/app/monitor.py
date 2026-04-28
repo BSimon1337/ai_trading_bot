@@ -464,6 +464,35 @@ def _sentiment_snapshot(summary: DecisionSummary | None) -> SentimentSnapshot:
     )
 
 
+def _has_sentiment_evidence(summary: DecisionSummary | None) -> bool:
+    if summary is None:
+        return False
+    evidence_values = (
+        summary.sentiment_source,
+        summary.sentiment_probability,
+        summary.sentiment_label,
+        summary.sentiment_availability_state,
+        summary.sentiment_is_fallback,
+        summary.sentiment_observed_at,
+        summary.headline_count,
+        summary.headline_preview,
+        summary.sentiment_window_start,
+        summary.sentiment_window_end,
+    )
+    return any(str(value or "").strip() for value in evidence_values)
+
+
+def _latest_sentiment_summary(decisions: pd.DataFrame) -> DecisionSummary | None:
+    if decisions.empty:
+        return None
+
+    for row in reversed(decisions.to_dict(orient="records")):
+        summary = _row_to_summary(row, DecisionSummary)
+        if _has_sentiment_evidence(summary):
+            return summary
+    return None
+
+
 def _headline_evidence_preview(
     summary: DecisionSummary | None,
     *,
@@ -1050,8 +1079,9 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
     recent_fills = _recent_rows(fills)
     latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
     held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
-    current_sentiment = _sentiment_snapshot(latest_decision)
-    headline_preview = _headline_evidence_preview(latest_decision)
+    sentiment_summary = _latest_sentiment_summary(decisions) or latest_decision
+    current_sentiment = _sentiment_snapshot(sentiment_summary)
+    headline_preview = _headline_evidence_preview(sentiment_summary)
     sentiment_trend = _sentiment_trend(decisions)
     broker_rejection_count = 0
     for frame in (decisions, fills):

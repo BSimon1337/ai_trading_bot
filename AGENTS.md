@@ -10,6 +10,8 @@ Auto-generated from all feature plans. Last updated: 2026-04-26
 - Python 3.10 + Existing Flask, pandas, python-dotenv, pytest, pystray, Pillow stack already used by the monitor feature (006-monitor-accuracy-refinement)
 - Python 3.10 + Existing Flask, pandas, python-dotenv, Lumibot runtime stack, local FinBERT path through `transformers` and `torch`, pytest (007-sentiment-observability)
 - Existing local CSV runtime evidence files plus current news/sentiment runtime flows; no database (007-sentiment-observability)
+- Python 3.10 + Existing Python runtime stack plus standard-library `subprocess`, `threading`, `json`, `pathlib`, and `dataclasses`; no new third-party dependency planned (008-runtime-manager)
+- Existing CSV runtime evidence plus a local runtime-registry JSON/state file for managed process lifecycle metadata (008-runtime-manager)
 
 - Python 3.10 + Lumibot, Alpaca integration via Lumibot broker support, pandas, joblib, python-dotenv, pytest (002-modular-trading-bot)
 
@@ -29,9 +31,9 @@ cd src; pytest; ruff check .
 Python 3.10: Follow standard conventions
 
 ## Recent Changes
+- 008-runtime-manager: Added Python 3.10 + Existing Python runtime stack plus standard-library `subprocess`, `threading`, `json`, `pathlib`, and `dataclasses`; no new third-party dependency planned
 - 007-sentiment-observability: Added Python 3.10 + Existing Flask, pandas, python-dotenv, Lumibot runtime stack, local FinBERT path through `transformers` and `torch`, pytest
 - 006-monitor-accuracy-refinement: Added Python 3.10 + Existing Flask, pandas, python-dotenv, pytest, pystray, Pillow stack already used by the monitor feature
-- 005-dashboard-tray-app: Added Python 3.10 + Existing Flask/pandas/python-dotenv stack; add `pystray==0.19.5` and `Pillow==11.3.0` for tray icon support
 
 
 <!-- MANUAL ADDITIONS START -->
