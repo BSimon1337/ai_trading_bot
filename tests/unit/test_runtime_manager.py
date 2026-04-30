@@ -3,11 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from tradingbot.app.runtime_manager import (
+    DEFAULT_RECENT_CONTROL_ACTIONS_LIMIT,
     DEFAULT_RECENT_SESSIONS_LIMIT,
     LifecycleEvent,
+    ManagedControlAction,
     ManagedRuntime,
     RuntimeRegistry,
     RuntimeSession,
+    add_control_action,
     add_runtime_session,
     build_runtime_launch_command,
     build_runtime_launch_env,
@@ -15,6 +18,9 @@ from tradingbot.app.runtime_manager import (
     load_runtime_registry,
     register_managed_runtime,
     restart_managed_runtime,
+    request_restart_runtime_action,
+    request_start_runtime_action,
+    request_stop_runtime_action,
     start_managed_runtime,
     start_managed_runtimes,
     stop_managed_runtime,
@@ -79,12 +85,31 @@ def _event(symbol: str = "BTC/USD", session_id: str = "session-1", **overrides) 
     return LifecycleEvent(**payload)
 
 
+def _control_action(symbol: str = "BTC/USD", action_id: str = "action-1", **overrides) -> ManagedControlAction:
+    payload = {
+        "action_id": action_id,
+        "symbol": symbol,
+        "asset_class": "crypto" if "/" in symbol else "stock",
+        "requested_action": "start",
+        "mode_context": "live",
+        "requested_at_utc": "2026-04-28T02:05:00+00:00",
+        "requested_from": "dashboard",
+        "confirmation_state": "confirmed",
+        "outcome_state": "succeeded",
+        "outcome_message": "Runtime start succeeded.",
+        "runtime_session_id": f"session-{symbol.replace('/', '').lower()}",
+    }
+    payload.update(overrides)
+    return ManagedControlAction(**payload)
+
+
 def test_runtime_registry_round_trips_serialized_dataclasses():
     registry = RuntimeRegistry(
         updated_at_utc="2026-04-28T02:06:00+00:00",
         managed_runtimes=(_runtime(),),
         recent_sessions=(_session(),),
         lifecycle_events=(_event(),),
+        recent_control_actions=(_control_action(),),
     )
 
     restored = runtime_registry_from_dict(runtime_registry_to_dict(registry))
@@ -93,6 +118,7 @@ def test_runtime_registry_round_trips_serialized_dataclasses():
     assert restored.managed_runtimes == registry.managed_runtimes
     assert restored.recent_sessions == registry.recent_sessions
     assert restored.lifecycle_events == registry.lifecycle_events
+    assert restored.recent_control_actions == registry.recent_control_actions
 
 
 def test_runtime_registry_save_and_load_preserves_contents(tmp_path: Path):
@@ -102,6 +128,7 @@ def test_runtime_registry_save_and_load_preserves_contents(tmp_path: Path):
         managed_runtimes=(_runtime(),),
         recent_sessions=(_session(),),
         lifecycle_events=(_event(),),
+        recent_control_actions=(_control_action(),),
     )
 
     save_runtime_registry(path, registry)
@@ -111,6 +138,7 @@ def test_runtime_registry_save_and_load_preserves_contents(tmp_path: Path):
     assert loaded.managed_runtimes == registry.managed_runtimes
     assert loaded.recent_sessions == registry.recent_sessions
     assert loaded.lifecycle_events == registry.lifecycle_events
+    assert loaded.recent_control_actions == registry.recent_control_actions
 
 
 def test_register_managed_runtime_keeps_one_authoritative_runtime_per_symbol():
@@ -155,6 +183,67 @@ def test_add_runtime_session_ignores_non_positive_limit():
     assert len(registry.recent_sessions) == DEFAULT_RECENT_SESSIONS_LIMIT
     assert registry.recent_sessions[0].session_id == "session-2"
     assert registry.recent_sessions[-1].session_id == f"session-{DEFAULT_RECENT_SESSIONS_LIMIT + 1}"
+
+
+def test_add_control_action_applies_bounded_recent_control_limit():
+    registry = RuntimeRegistry()
+
+    for action_number in range(4):
+        registry = add_control_action(
+            registry,
+            _control_action(action_id=f"action-{action_number}"),
+            recent_limit=2,
+        )
+
+    assert [action.action_id for action in registry.recent_control_actions] == ["action-2", "action-3"]
+
+
+def test_add_control_action_ignores_non_positive_limit():
+    registry = RuntimeRegistry()
+
+    for action_number in range(DEFAULT_RECENT_CONTROL_ACTIONS_LIMIT + 2):
+        registry = add_control_action(
+            registry,
+            _control_action(action_id=f"action-{action_number}"),
+            recent_limit=0,
+        )
+
+    assert len(registry.recent_control_actions) == DEFAULT_RECENT_CONTROL_ACTIONS_LIMIT
+    assert registry.recent_control_actions[0].action_id == "action-2"
+    assert registry.recent_control_actions[-1].action_id == f"action-{DEFAULT_RECENT_CONTROL_ACTIONS_LIMIT + 1}"
+
+
+def test_add_control_action_preserves_recent_order_for_mixed_asset_activity():
+    registry = RuntimeRegistry()
+
+    registry = add_control_action(
+        registry,
+        _control_action(symbol="SPY", action_id="stock-start", requested_at_utc="2026-04-28T02:00:00+00:00"),
+        recent_limit=5,
+    )
+    registry = add_control_action(
+        registry,
+        _control_action(
+            symbol="BTC/USD",
+            action_id="crypto-restart",
+            requested_action="restart",
+            requested_at_utc="2026-04-28T02:05:00+00:00",
+        ),
+        recent_limit=5,
+    )
+    registry = add_control_action(
+        registry,
+        _control_action(
+            symbol="SPY",
+            action_id="stock-stop",
+            requested_action="stop",
+            mode_context="paper",
+            requested_at_utc="2026-04-28T02:10:00+00:00",
+        ),
+        recent_limit=2,
+    )
+
+    assert [action.action_id for action in registry.recent_control_actions] == ["crypto-restart", "stock-stop"]
 
 
 def test_build_symbol_runtime_config_uses_symbol_scoped_log_paths():
@@ -454,3 +543,178 @@ def test_restart_managed_runtime_respects_live_safety_guardrails(tmp_path: Path)
     assert restart_result.runtime_state == "failed"
     assert "Live trading is blocked" in restart_result.status_message
     assert runtime.lifecycle_state == "failed"
+
+
+def test_request_start_runtime_action_records_control_action_for_successful_start(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+
+    class FakeProcess:
+        pid = 4567
+
+    def fake_popen(command, cwd=None, env=None):
+        del command, cwd, env
+        return FakeProcess()
+
+    action = request_start_runtime_action(
+        config,
+        "SPY",
+        registry_path=registry_path,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+    registry = load_runtime_registry(registry_path)
+
+    assert action.requested_action == "start"
+    assert action.asset_class == "stock"
+    assert action.outcome_state == "succeeded"
+    assert registry.recent_control_actions[-1] == action
+
+
+def test_request_start_runtime_action_blocks_already_running_runtime(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+    save_runtime_registry(
+        registry_path,
+        RuntimeRegistry(managed_runtimes=(_runtime(symbol="BTC/USD", lifecycle_state="running"),)),
+    )
+
+    action = request_start_runtime_action(config, "BTC/USD", registry_path=registry_path)
+
+    assert action.outcome_state == "blocked"
+    assert "already running" in action.outcome_message
+
+
+def test_request_start_runtime_action_blocks_live_dashboard_start_without_confirmation(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(
+        runtime_registry_path=str(registry_path),
+        paper=False,
+        live_trading_enabled=True,
+        live_run_confirmation="CONFIRM",
+        live_confirmation_token="CONFIRM",
+    )
+
+    action = request_start_runtime_action(
+        config,
+        "BTC/USD",
+        mode="live",
+        registry_path=registry_path,
+        requested_from="dashboard",
+        confirmation_state="missing_confirmation",
+    )
+
+    assert action.outcome_state == "blocked"
+    assert action.confirmation_state == "missing_confirmation"
+    assert "requires confirmation" in action.outcome_message
+
+
+def test_request_stop_runtime_action_blocks_when_runtime_already_stopped(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+
+    action = request_stop_runtime_action(config, "BTC/USD", registry_path=registry_path)
+
+    assert action.requested_action == "stop"
+    assert action.outcome_state == "blocked"
+    assert action.outcome_message == "Runtime is already stopped."
+
+
+def test_request_start_runtime_action_allows_live_dashboard_start_with_confirmation(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(
+        runtime_registry_path=str(registry_path),
+        paper=False,
+        live_trading_enabled=True,
+        live_run_confirmation="CONFIRM",
+        live_confirmation_token="CONFIRM",
+    )
+
+    class FakeProcess:
+        pid = 4567
+
+    def fake_popen(command, cwd=None, env=None):
+        del command, cwd, env
+        return FakeProcess()
+
+    action = request_start_runtime_action(
+        config,
+        "BTC/USD",
+        mode="live",
+        registry_path=registry_path,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+        requested_from="dashboard",
+        confirmation_state="confirmed",
+    )
+
+    assert action.outcome_state == "succeeded"
+    assert action.confirmation_state == "confirmed"
+
+
+def test_request_restart_runtime_action_records_new_session_for_successful_restart(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+
+    class FakeProcess:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+    pids = iter((1234, 5678))
+
+    def fake_popen(command, cwd=None, env=None):
+        del command, cwd, env
+        return FakeProcess(next(pids))
+
+    start_result = start_managed_runtime(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+
+    terminated: list[int] = []
+
+    def fake_terminate(pid: int):
+        terminated.append(pid)
+
+    action = request_restart_runtime_action(
+        config,
+        "BTC/USD",
+        registry_path=registry_path,
+        terminate_process=fake_terminate,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+    registry = load_runtime_registry(registry_path)
+
+    assert terminated == [1234]
+    assert action.requested_action == "restart"
+    assert action.outcome_state == "succeeded"
+    assert action.runtime_session_id != start_result.session_id
+    assert registry.recent_control_actions[-1] == action
+
+
+def test_request_restart_runtime_action_blocks_live_dashboard_restart_without_confirmation(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(
+        runtime_registry_path=str(registry_path),
+        paper=False,
+        live_trading_enabled=True,
+        live_run_confirmation="CONFIRM",
+        live_confirmation_token="CONFIRM",
+    )
+
+    action = request_restart_runtime_action(
+        config,
+        "BTC/USD",
+        mode="live",
+        registry_path=registry_path,
+        requested_from="dashboard",
+        confirmation_state="invalid_confirmation",
+    )
+
+    assert action.outcome_state == "blocked"
+    assert action.confirmation_state == "invalid_confirmation"
+    assert "requires confirmation" in action.outcome_message

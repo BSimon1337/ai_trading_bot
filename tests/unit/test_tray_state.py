@@ -162,3 +162,31 @@ def test_tray_state_mapping_handles_stopped_runtime_aggregate_state():
     assert state.state == "stopped"
     assert state.label.endswith("(Stopped)")
     assert "Running runtimes: 0." in state.tooltip
+
+
+def test_tray_state_mapping_includes_latest_control_outcome_summary():
+    payload = {
+        "status_updated_utc": "2026-04-19 12:00:00 UTC",
+        "aggregate_state": "live",
+        "instances": [
+            {"label": "BTC/USD", "runtime_state": "running", "runtime_last_seen_utc": "2026-04-19T12:00:00+00:00", "control_mode_context": "live"},
+            {"label": "SPY", "runtime_state": "stopped", "runtime_last_seen_utc": "2026-04-19T11:59:00+00:00", "control_mode_context": "paper"},
+        ],
+        "issues": [],
+        "notes": [],
+        "recent_control_actions": [
+            {
+                "requested_action": "restart",
+                "symbol": "BTC/USD",
+                "asset_class": "crypto",
+                "outcome_state": "succeeded",
+            }
+        ],
+        "historical_context": {"historical_issue_count": 0},
+    }
+
+    state = tray_state_from_dashboard(payload)
+
+    assert "Latest control: restart BTC/USD (crypto) succeeded." in state.tooltip
+    assert "Live controls: 1." in state.tooltip
+    assert "Paper controls: 1." in state.tooltip

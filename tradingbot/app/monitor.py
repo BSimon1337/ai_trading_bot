@@ -10,13 +10,18 @@ from typing import Any
 
 import pandas as pd
 from flask import Flask, jsonify, render_template
+from flask import request as flask_request
 
 from tradingbot.app.runtime_manager import (
     LifecycleEvent,
+    ManagedControlAction,
     ManagedRuntime,
     empty_runtime_registry,
     lifecycle_event_index,
     load_runtime_registry,
+    request_restart_runtime_action,
+    request_start_runtime_action,
+    request_stop_runtime_action,
     runtime_state_index,
 )
 from tradingbot.config.settings import BotConfig, infer_asset_class
@@ -33,6 +38,7 @@ VALUE_SOURCE_SNAPSHOT_DELTA = "snapshot_delta"
 VALUE_SOURCE_UNAVAILABLE = "unavailable"
 DEFAULT_HEADLINE_PREVIEW_LIMIT = 3
 DEFAULT_SENTIMENT_TREND_LIMIT = 5
+DEFAULT_CONTROL_ACTIVITY_LIMIT = 25
 
 
 @dataclass(frozen=True)
@@ -176,6 +182,7 @@ class DashboardInstance:
     runtime_last_seen_utc: str = ""
     last_lifecycle_event: str = ""
     is_fresh_runtime_session: bool = False
+    runtime_mode_context: str = ""
 
 
 @dataclass(frozen=True)
@@ -189,6 +196,7 @@ class MonitorConfiguration:
     tray_enabled: bool = True
     read_only: bool = True
     runtime_registry_path: Path = Path("logs/runtime/runtime_registry.json")
+    recent_control_actions: tuple[ManagedControlAction, ...] = ()
     instances: tuple[DashboardInstance, ...] = ()
 
 
@@ -325,6 +333,7 @@ def discover_monitor_instances(
                 fill_log_path=fill_path,
                 snapshot_log_path=snapshot_path,
                 runtime_state="" if runtime is None else runtime.lifecycle_state,
+                runtime_mode_context="" if runtime is None else runtime.mode,
                 runtime_status_message=""
                 if runtime is None
                 else runtime.failure_reason or (lifecycle_event.message if lifecycle_event is not None else runtime.lifecycle_state.replace("_", " ")),
@@ -341,12 +350,17 @@ def discover_monitor_instances(
 
 def load_runtime_registry_views(
     runtime_registry_path: Path,
-) -> tuple[dict[str, ManagedRuntime], dict[str, LifecycleEvent]]:
+) -> tuple[dict[str, ManagedRuntime], dict[str, LifecycleEvent], tuple[ManagedControlAction, ...], str]:
     try:
         registry = load_runtime_registry(runtime_registry_path)
     except (OSError, ValueError, json.JSONDecodeError):
         registry = empty_runtime_registry()
-    return runtime_state_index(registry), lifecycle_event_index(registry)
+    return (
+        runtime_state_index(registry),
+        lifecycle_event_index(registry),
+        registry.recent_control_actions,
+        registry.updated_at_utc,
+    )
 
 
 def load_monitor_configuration(
@@ -372,7 +386,7 @@ def load_monitor_configuration(
         for marker in os.getenv("MONITOR_ARCHIVE_MARKERS", ",".join(DEFAULT_ARCHIVE_MARKERS)).split(",")
         if marker.strip()
     ) or DEFAULT_ARCHIVE_MARKERS
-    runtime_index, lifecycle_index = load_runtime_registry_views(runtime_registry_path)
+    runtime_index, lifecycle_index, recent_control_actions, _ = load_runtime_registry_views(runtime_registry_path)
     return MonitorConfiguration(
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -383,6 +397,7 @@ def load_monitor_configuration(
         tray_enabled=tray_enabled,
         read_only=True,
         runtime_registry_path=runtime_registry_path,
+        recent_control_actions=recent_control_actions,
         instances=discover_monitor_instances(
             config=config,
             symbols=symbols,
@@ -391,6 +406,170 @@ def load_monitor_configuration(
             lifecycle_index=lifecycle_index,
         ),
     )
+
+
+def _control_availability_for_instance(instance: DashboardInstance, latest_mode: str = "") -> dict[str, Any]:
+    runtime_state = (instance.runtime_state or "").strip().lower()
+    asset_class = instance.asset_classes[0] if instance.asset_classes else infer_asset_class(instance.label)
+    mode_context = (instance.runtime_mode_context or latest_mode or "").strip().lower()
+
+    if runtime_state in {"starting", "stopping", "restarting"}:
+        return {
+            "control_asset_class": asset_class,
+            "control_mode_context": mode_context,
+            "control_runtime_state": runtime_state,
+            "can_start": False,
+            "can_stop": False,
+            "can_restart": False,
+            "control_availability_message": f"Runtime is currently {runtime_state}.",
+            "requires_live_confirmation": mode_context == "live",
+        }
+    if runtime_state == "running":
+        return {
+            "control_asset_class": asset_class,
+            "control_mode_context": mode_context,
+            "control_runtime_state": runtime_state,
+            "can_start": False,
+            "can_stop": True,
+            "can_restart": True,
+            "control_availability_message": "Runtime is currently running.",
+            "requires_live_confirmation": mode_context == "live",
+        }
+    if runtime_state in {"failed", "paused", "stopped"}:
+        message = {
+            "failed": "Runtime is not currently healthy. Start or restart is available.",
+            "paused": "Runtime is paused. Start or restart is available.",
+            "stopped": "Runtime is stopped. Start or restart is available.",
+        }[runtime_state]
+        return {
+            "control_asset_class": asset_class,
+            "control_mode_context": mode_context,
+            "control_runtime_state": runtime_state,
+            "can_start": True,
+            "can_stop": False,
+            "can_restart": True,
+            "control_availability_message": message,
+            "requires_live_confirmation": mode_context == "live",
+        }
+    return {
+        "control_asset_class": asset_class,
+        "control_mode_context": mode_context,
+        "control_runtime_state": runtime_state or "unmanaged",
+        "can_start": True,
+        "can_stop": False,
+        "can_restart": False,
+        "control_availability_message": "No active managed runtime is registered.",
+        "requires_live_confirmation": mode_context == "live",
+    }
+
+
+def _confirmation_state_for_request(
+    config: BotConfig,
+    *,
+    mode_context: str,
+    requested_action: str,
+    provided_confirmation: str,
+) -> tuple[str, str]:
+    normalized_mode = (mode_context or "").strip().lower()
+    normalized_action = (requested_action or "").strip().lower()
+    confirmation = (provided_confirmation or "").strip()
+    live_actions = {"start", "restart"}
+    if normalized_mode != "live" or normalized_action not in live_actions:
+        return "not_required", ""
+    if confirmation == config.live_confirmation_token:
+        return "confirmed", ""
+    token_hint = config.live_confirmation_token or "CONFIRM"
+    return (
+        "missing_confirmation" if not confirmation else "invalid_confirmation",
+        f"Live {normalized_action} requires confirmation. Enter {token_hint} to continue.",
+    )
+
+
+def _blocked_control_action(
+    *,
+    symbol: str,
+    requested_action: str,
+    mode_context: str,
+    asset_class: str,
+    confirmation_state: str,
+    outcome_message: str,
+) -> ManagedControlAction:
+    return ManagedControlAction(
+        action_id=f"blocked-{requested_action}-{symbol}-{int(datetime.now(timezone.utc).timestamp())}",
+        symbol=symbol,
+        asset_class=asset_class,
+        requested_action=requested_action,
+        mode_context=mode_context,
+        requested_at_utc=_utc_now_iso(),
+        requested_from="dashboard",
+        confirmation_state=confirmation_state,
+        outcome_state="blocked",
+        outcome_message=outcome_message,
+        runtime_session_id="",
+    )
+
+
+def _control_action_to_dict(action: ManagedControlAction) -> dict[str, Any]:
+    timestamp = pd.to_datetime(action.requested_at_utc, errors="coerce", utc=True)
+    requested_at = action.requested_at_utc
+    if pd.notna(timestamp):
+        requested_at = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+    return {
+        "action_id": action.action_id,
+        "timestamp_utc": action.requested_at_utc,
+        "symbol": action.symbol,
+        "asset_class": action.asset_class,
+        "requested_action": action.requested_action,
+        "mode_context": action.mode_context,
+        "requested_at_utc": requested_at,
+        "requested_from": action.requested_from,
+        "confirmation_state": action.confirmation_state,
+        "outcome_state": action.outcome_state,
+        "outcome_message": action.outcome_message,
+        "runtime_session_id": action.runtime_session_id,
+    }
+
+
+def _load_recent_control_actions(
+    *,
+    config: BotConfig | None = None,
+    recent_control_actions: tuple[ManagedControlAction, ...] | None = None,
+    runtime_registry_path: Path | None = None,
+    limit: int = DEFAULT_CONTROL_ACTIVITY_LIMIT,
+) -> tuple[list[dict[str, Any]], str]:
+    actions = recent_control_actions
+    updated_at_utc = ""
+    if actions is None:
+        registry_path = Path(
+            runtime_registry_path
+            or os.getenv(
+                "RUNTIME_REGISTRY_PATH",
+                config.runtime_registry_path if config is not None else "logs/runtime/runtime_registry.json",
+            )
+        )
+        _, _, actions, updated_at_utc = load_runtime_registry_views(registry_path)
+    effective_limit = max(1, limit)
+    if config is not None:
+        effective_limit = max(1, int(config.runtime_recent_control_actions_limit))
+    sorted_actions = sorted(actions or (), key=lambda item: item.requested_at_utc, reverse=True)
+    if not sorted_actions:
+        updated_at_utc = ""
+    return ([_control_action_to_dict(action) for action in sorted_actions[:effective_limit]], updated_at_utc)
+
+
+def _request_value(name: str, default: str = "") -> str:
+    payload = flask_request.get_json(silent=True)
+    if isinstance(payload, dict):
+        value = payload.get(name, default)
+        return str(value).strip()
+    value = flask_request.form.get(name, default)
+    return str(value).strip()
+
+
+def _control_response(action: ManagedControlAction) -> dict[str, Any]:
+    if isinstance(action, dict):
+        return action
+    return _control_action_to_dict(action)
 
 
 def redact_sensitive_values(value: Any) -> Any:
@@ -1146,10 +1325,11 @@ def summarize_instance(
         runtime_last_seen_utc=instance.runtime_last_seen_utc,
         last_lifecycle_event=instance.last_lifecycle_event,
         is_fresh_runtime_session=instance.is_fresh_runtime_session,
+        runtime_mode_context=instance.runtime_mode_context,
     )
 
 
-def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
+def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None = None) -> dict[str, Any]:
     latest_decision = instance.latest_decision or DecisionSummary()
     latest_fill = instance.latest_fill or FillSummary()
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
@@ -1195,6 +1375,7 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
             result = str(row.get("result", ""))
             if result in {"rejected", "canceled"} or reason.startswith("broker_"):
                 broker_rejection_count += 1
+    control_availability = _control_availability_for_instance(instance, latest_decision.mode or latest_snapshot.mode)
     return {
         "label": instance.label,
         "status": _status_to_dict(instance.status),
@@ -1216,6 +1397,23 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "runtime_last_seen_utc": instance.runtime_last_seen_utc,
         "last_lifecycle_event": instance.last_lifecycle_event,
         "is_fresh_runtime_session": instance.is_fresh_runtime_session,
+        "control_asset_class": control_availability["control_asset_class"],
+        "control_mode_context": control_availability["control_mode_context"],
+        "control_runtime_state": control_availability["control_runtime_state"],
+        "can_start": control_availability["can_start"],
+        "can_stop": control_availability["can_stop"],
+        "can_restart": control_availability["can_restart"],
+        "control_availability_message": control_availability["control_availability_message"],
+        "requires_live_confirmation": control_availability["requires_live_confirmation"],
+        "control_confirmation_hint": (
+            f"Enter {config.live_confirmation_token} before live start or restart."
+            if control_availability["requires_live_confirmation"] and config is not None
+            else (
+                "Live start and restart require explicit confirmation."
+                if control_availability["requires_live_confirmation"]
+                else "Paper controls do not require live confirmation."
+            )
+        ),
         "last_decision_utc": latest_decision.timestamp or "",
         "last_fill_utc": latest_fill.timestamp or "",
         "heartbeat_age_minutes": instance.status.age_minutes,
@@ -1357,6 +1555,7 @@ def dashboard_status(
     instances: tuple[DashboardInstance, ...] | None = None,
     *,
     config: BotConfig | None = None,
+    recent_control_actions: tuple[ManagedControlAction, ...] | None = None,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
     historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT,
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
@@ -1376,6 +1575,10 @@ def dashboard_status(
     issues = [issue for instance in display_instances for issue in instance.issues]
     notes = [note for instance in display_instances for note in instance.notes]
     recent_activity = _collect_recent_activity(display_instances)
+    recent_control_rows, latest_control_updated_at_utc = _load_recent_control_actions(
+        config=config,
+        recent_control_actions=recent_control_actions,
+    )
     payload = {
         "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "aggregate_state": _aggregate_state(summarized),
@@ -1385,7 +1588,10 @@ def dashboard_status(
             stale_after_minutes=stale_after_minutes,
             historical_issue_limit=historical_issue_limit,
         ),
-        "instances": [_instance_payload(instance) for instance in display_instances],
+        "instances": [_instance_payload(instance, config=config) for instance in display_instances],
+        "recent_control_actions": recent_control_rows,
+        "latest_control_updated_at_utc": latest_control_updated_at_utc,
+        "recent_control_activity_count": len(recent_control_rows),
         "issues": [_issue_to_dict(issue) for issue in issues],
         "notes": [_note_to_dict(note) for note in _sort_notes(notes)],
         "recent_activity_columns": ["timestamp", "instance_label", "mode", "symbol", "action", "action_source", "quantity", "reason", "result"],
@@ -1398,6 +1604,10 @@ def create_app(
     *,
     instances: tuple[DashboardInstance, ...] | None = None,
     config: BotConfig | None = None,
+    recent_control_actions: tuple[ManagedControlAction, ...] | None = None,
+    start_action_runner: Any = request_start_runtime_action,
+    stop_action_runner: Any = request_stop_runtime_action,
+    restart_action_runner: Any = request_restart_runtime_action,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
     historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT,
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
@@ -1409,6 +1619,7 @@ def create_app(
         return dashboard_status(
             instances,
             config=config,
+            recent_control_actions=recent_control_actions,
             stale_after_minutes=stale_after_minutes,
             historical_issue_limit=historical_issue_limit,
             archive_markers=archive_markers,
@@ -1434,5 +1645,93 @@ def create_app(
     @app.route("/api/status")
     def api_status():
         return jsonify(status_payload())
+
+    @app.route("/control/start", methods=["POST"])
+    def control_start():
+        if config is None:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "Runtime control configuration is unavailable."}), 503
+        symbol = _request_value("symbol")
+        if not symbol:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "A symbol is required."}), 400
+        mode_context = _request_value("mode_context", "paper" if config.paper else "live") or ("paper" if config.paper else "live")
+        confirmation_value = _request_value("live_confirmation")
+        confirmation_state, confirmation_error = _confirmation_state_for_request(
+            config,
+            mode_context=mode_context,
+            requested_action="start",
+            provided_confirmation=confirmation_value,
+        )
+        if confirmation_error:
+            return jsonify(
+                _control_response(
+                    _blocked_control_action(
+                        symbol=symbol,
+                        requested_action="start",
+                        mode_context=mode_context,
+                        asset_class=infer_asset_class(symbol),
+                        confirmation_state=confirmation_state,
+                        outcome_message=confirmation_error,
+                    )
+                )
+            )
+        action = start_action_runner(
+            config,
+            symbol,
+            mode="paper" if mode_context == "paper" else "live",
+            requested_from="dashboard",
+            confirmation_state=confirmation_state,
+        )
+        return jsonify(_control_response(action))
+
+    @app.route("/control/stop", methods=["POST"])
+    def control_stop():
+        if config is None:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "Runtime control configuration is unavailable."}), 503
+        symbol = _request_value("symbol")
+        if not symbol:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "A symbol is required."}), 400
+        action = stop_action_runner(
+            config,
+            symbol,
+            requested_from="dashboard",
+        )
+        return jsonify(_control_response(action))
+
+    @app.route("/control/restart", methods=["POST"])
+    def control_restart():
+        if config is None:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "Runtime control configuration is unavailable."}), 503
+        symbol = _request_value("symbol")
+        if not symbol:
+            return jsonify({"outcome_state": "blocked", "outcome_message": "A symbol is required."}), 400
+        mode_context = _request_value("mode_context", "paper" if config.paper else "live") or ("paper" if config.paper else "live")
+        confirmation_value = _request_value("live_confirmation")
+        confirmation_state, confirmation_error = _confirmation_state_for_request(
+            config,
+            mode_context=mode_context,
+            requested_action="restart",
+            provided_confirmation=confirmation_value,
+        )
+        if confirmation_error:
+            return jsonify(
+                _control_response(
+                    _blocked_control_action(
+                        symbol=symbol,
+                        requested_action="restart",
+                        mode_context=mode_context,
+                        asset_class=infer_asset_class(symbol),
+                        confirmation_state=confirmation_state,
+                        outcome_message=confirmation_error,
+                    )
+                )
+            )
+        action = restart_action_runner(
+            config,
+            symbol,
+            mode="paper" if mode_context == "paper" else "live",
+            requested_from="dashboard",
+            confirmation_state=confirmation_state,
+        )
+        return jsonify(_control_response(action))
 
     return app

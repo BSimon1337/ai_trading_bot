@@ -137,7 +137,7 @@ Stopping the monitor:
 - Browser-only mode: `Ctrl+C` in the terminal running `tradingbot-monitor --no-tray`
 - Tray mode: use `Exit Monitor` from the tray menu, or `Ctrl+C` if launched in the foreground shell
 
-The monitor remains read-only. It does not place, approve, cancel, or modify trades.
+The dashboard now controls runtime lifecycle only. It can start, stop, and restart managed bot processes, but it still does not place manual trades, approve broker orders, cancel live orders directly, or edit positions outside the runtime flow.
 
 What the refined monitor now shows:
 
@@ -151,6 +151,9 @@ What the refined monitor now shows:
 - stale and no-headline sentiment explanations without changing the monitor's read-only behavior
 - app-owned runtime state per symbol, including session id, lifecycle event, and fresh-session context
 - a clear distinction between `running`, `stopped`, `paused`, `failed`, and merely `stale` evidence
+- dashboard lifecycle controls for `start`, `stop`, and `restart`
+- visible live-vs-paper control context and explicit live confirmation prompts
+- recent control activity across both stock and crypto symbols
 
 Recommended monitor startup for your current multi-crypto setup:
 
@@ -172,7 +175,7 @@ Then open:
 http://127.0.0.1:8080
 ```
 
-Monitor troubleshooting:
+Monitor and control troubleshooting:
 
 - Blank browser page: confirm you launched from the repo root or used `tradingbot-monitor`, then open the exact host and port you passed on the command line.
 - Wrong working directory: run `cd C:\Users\Beau\ai_trading_bot` before `python monitor_app.py` or module-style commands so templates and local logs resolve correctly.
@@ -181,6 +184,8 @@ Monitor troubleshooting:
 - Historical noise still showing up as current: move older evidence into folders named like `archived`, `history`, or `old`, or set `MONITOR_ARCHIVE_MARKERS` to match your retention folder names.
 - Current evidence feeling too old or too aggressive: tune `MONITOR_STALE_AFTER_MINUTES` and `MONITOR_HISTORICAL_ISSUE_LIMIT` for your local workflow.
 - Runtime shows `stopped` while old decisions still exist: this is expected once the runtime manager owns lifecycle state; `stopped` now beats stale CSV evidence.
+- Live start or restart is blocked from the dashboard: enter the configured `LIVE_CONFIRMATION_TOKEN` in the live confirmation field before submitting the action.
+- Dashboard control appears to do nothing: check the `Recent Control Activity` table first; blocked and failed actions now show there with a reason before you need to inspect terminal output.
 
 ## Runtime Manager
 
@@ -205,9 +210,11 @@ What the runtime manager preserves:
 
 What it does not do yet:
 
-- interactive dashboard controls
 - bulk process supervision beyond the local runtime registry
-- a separate approval path for live trading
+- a separate approval path for live trading beyond the confirmation-token safeguard
+- dashboard editing for broader strategy/risk settings
+
+The next planned app layer after this is richer operator management on top of the current runtime controls, including settings and broader application workflow improvements, while continuing to support both stock and crypto symbols through one shared operator experience.
 
 Generated runtime evidence:
 

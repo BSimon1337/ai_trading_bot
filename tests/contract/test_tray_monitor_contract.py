@@ -169,11 +169,14 @@ def test_tray_monitor_contract_reports_runtime_counts_without_changing_read_only
             "status_updated_utc": "2026-04-19 12:00:00 UTC",
             "aggregate_state": "live",
             "instances": [
-                {"label": "BTC/USD", "runtime_state": "running", "runtime_last_seen_utc": "2026-04-19T12:00:00+00:00"},
-                {"label": "ETH/USD", "runtime_state": "failed", "runtime_last_seen_utc": "2026-04-19T11:59:00+00:00"},
+                {"label": "BTC/USD", "runtime_state": "running", "runtime_last_seen_utc": "2026-04-19T12:00:00+00:00", "control_mode_context": "live"},
+                {"label": "ETH/USD", "runtime_state": "failed", "runtime_last_seen_utc": "2026-04-19T11:59:00+00:00", "control_mode_context": "paper"},
             ],
             "issues": [],
             "notes": [],
+            "recent_control_actions": [
+                {"requested_action": "restart", "symbol": "BTC/USD", "asset_class": "crypto", "outcome_state": "succeeded"}
+            ],
             "historical_context": {"historical_issue_count": 0},
         },
         browser_opener=lambda url: True,
@@ -188,6 +191,7 @@ def test_tray_monitor_contract_reports_runtime_counts_without_changing_read_only
     assert result["state"] == "live"
     assert "Running runtimes: 1." in controller.state.tooltip
     assert "Failed runtimes: 1." in controller.state.tooltip
+    assert "Latest control: restart BTC/USD (crypto) succeeded." in controller.state.tooltip
 
 
 def test_tray_monitor_contract_distinguishes_stopped_runtime_state_from_stale_monitoring():

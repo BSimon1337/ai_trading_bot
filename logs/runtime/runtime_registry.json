@@ -1,0 +1,282 @@
+{
+  "lifecycle_events": [
+    {
+      "event_type": "start_requested",
+      "message": "Runtime start requested.",
+      "session_id": "btcusd-aa77405b988f",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:47:02.191757+00:00"
+    },
+    {
+      "event_type": "running",
+      "message": "Runtime is running.",
+      "session_id": "btcusd-aa77405b988f",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:47:02.197856+00:00"
+    },
+    {
+      "event_type": "stop_requested",
+      "message": "Runtime stopped by operator.",
+      "session_id": "btcusd-aa77405b988f",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:48:39.229772+00:00"
+    },
+    {
+      "event_type": "failed",
+      "message": "[WinError 87] The parameter is incorrect",
+      "session_id": "btcusd-aa77405b988f",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:48:39.229772+00:00"
+    },
+    {
+      "event_type": "stop_requested",
+      "message": "Runtime stopped by operator.",
+      "session_id": "btcusd-aa77405b988f",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:48:50.622026+00:00"
+    },
+    {
+      "event_type": "failed",
+      "message": "[WinError 87] The parameter is incorrect",
+      "session_id": "btcusd-aa77405b988f",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:48:50.622026+00:00"
+    },
+    {
+      "event_type": "start_requested",
+      "message": "Runtime start requested.",
+      "session_id": "btcusd-1feb56c52b9a",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:52:11.850958+00:00"
+    },
+    {
+      "event_type": "running",
+      "message": "Runtime is running.",
+      "session_id": "btcusd-1feb56c52b9a",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:52:11.857104+00:00"
+    },
+    {
+      "event_type": "start_requested",
+      "message": "Runtime start requested.",
+      "session_id": "btcusd-bac6933b73ee",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:57:03.850867+00:00"
+    },
+    {
+      "event_type": "running",
+      "message": "Runtime is running.",
+      "session_id": "btcusd-bac6933b73ee",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:57:03.857148+00:00"
+    },
+    {
+      "event_type": "restart_requested",
+      "message": "Runtime restart requested.",
+      "session_id": "btcusd-bac6933b73ee",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:59:33.646763+00:00"
+    },
+    {
+      "event_type": "stop_requested",
+      "message": "Runtime restarting.",
+      "session_id": "btcusd-bac6933b73ee",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:59:33.656889+00:00"
+    },
+    {
+      "event_type": "stopped",
+      "message": "Runtime restarting.",
+      "session_id": "btcusd-bac6933b73ee",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:59:33.656889+00:00"
+    },
+    {
+      "event_type": "start_requested",
+      "message": "Runtime start requested.",
+      "session_id": "btcusd-d174cdd90c6b",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:59:33.667043+00:00"
+    },
+    {
+      "event_type": "running",
+      "message": "Runtime is running.",
+      "session_id": "btcusd-d174cdd90c6b",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:59:33.674201+00:00"
+    },
+    {
+      "event_type": "restarted",
+      "message": "Runtime is running.",
+      "session_id": "btcusd-d174cdd90c6b",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:59:33.685349+00:00"
+    },
+    {
+      "event_type": "stop_requested",
+      "message": "Runtime stopped by operator.",
+      "session_id": "btcusd-d174cdd90c6b",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:59:53.468819+00:00"
+    },
+    {
+      "event_type": "stopped",
+      "message": "Runtime stopped by operator.",
+      "session_id": "btcusd-d174cdd90c6b",
+      "source": "runtime_manager",
+      "symbol": "BTC/USD",
+      "timestamp_utc": "2026-04-28T20:59:53.468819+00:00"
+    }
+  ],
+  "managed_runtimes": [
+    {
+      "decision_log_path": "logs\\paper_validation_btcusd\\decisions.csv",
+      "failure_reason": "",
+      "fill_log_path": "logs\\paper_validation_btcusd\\fills.csv",
+      "instance_label": "BTC/USD",
+      "last_exit_code": 0,
+      "last_seen_utc": "2026-04-28T20:59:53.468819+00:00",
+      "lifecycle_state": "stopped",
+      "mode": "live",
+      "pid": null,
+      "session_id": "btcusd-d174cdd90c6b",
+      "snapshot_log_path": "logs\\paper_validation_btcusd\\daily_snapshot.csv",
+      "started_at_utc": "2026-04-28T20:59:33.667043+00:00",
+      "stop_requested_at_utc": "2026-04-28T20:59:53.468819+00:00",
+      "symbol": "BTC/USD"
+    }
+  ],
+  "recent_sessions": [
+    {
+      "end_reason": "stop_failed",
+      "ended_at_utc": "2026-04-28T20:48:50.622026+00:00",
+      "exit_code": null,
+      "launch_command": [
+        "C:\\Users\\Beau\\ai_trading_bot\\.venv\\Scripts\\python.exe",
+        "-m",
+        "tradingbot.app.main",
+        "--mode",
+        "live"
+      ],
+      "launch_env_scope": {
+        "ALPACA_CRYPTO_UNIVERSE": "none",
+        "CRYPTO_SYMBOLS": "",
+        "DAILY_SNAPSHOT_PATH": "logs\\paper_validation_btcusd\\daily_snapshot.csv",
+        "DECISION_LOG_PATH": "logs\\paper_validation_btcusd\\decisions.csv",
+        "FILL_LOG_PATH": "logs\\paper_validation_btcusd\\fills.csv",
+        "RUNTIME_REGISTRY_PATH": "logs/runtime/runtime_registry.json",
+        "SYMBOL": "BTC/USD",
+        "SYMBOLS": "BTC/USD"
+      },
+      "mode": "paper",
+      "session_id": "btcusd-aa77405b988f",
+      "started_at_utc": "2026-04-28T20:47:02.191757+00:00",
+      "symbol": "BTC/USD",
+      "was_live_mode": false,
+      "was_manual_recovery": false
+    },
+    {
+      "end_reason": "",
+      "ended_at_utc": "",
+      "exit_code": null,
+      "launch_command": [
+        "C:\\Users\\Beau\\ai_trading_bot\\.venv\\Scripts\\python.exe",
+        "-m",
+        "tradingbot.app.main",
+        "--mode",
+        "live"
+      ],
+      "launch_env_scope": {
+        "ALPACA_CRYPTO_UNIVERSE": "none",
+        "CRYPTO_SYMBOLS": "",
+        "DAILY_SNAPSHOT_PATH": "logs\\paper_validation_btcusd\\daily_snapshot.csv",
+        "DECISION_LOG_PATH": "logs\\paper_validation_btcusd\\decisions.csv",
+        "FILL_LOG_PATH": "logs\\paper_validation_btcusd\\fills.csv",
+        "RUNTIME_REGISTRY_PATH": "logs/runtime/runtime_registry.json",
+        "SYMBOL": "BTC/USD",
+        "SYMBOLS": "BTC/USD"
+      },
+      "mode": "paper",
+      "session_id": "btcusd-1feb56c52b9a",
+      "started_at_utc": "2026-04-28T20:52:11.850958+00:00",
+      "symbol": "BTC/USD",
+      "was_live_mode": false,
+      "was_manual_recovery": false
+    },
+    {
+      "end_reason": "restart_requested",
+      "ended_at_utc": "2026-04-28T20:59:33.656889+00:00",
+      "exit_code": 0,
+      "launch_command": [
+        "C:\\Users\\Beau\\ai_trading_bot\\.venv\\Scripts\\python.exe",
+        "-m",
+        "tradingbot.app.main",
+        "--mode",
+        "live"
+      ],
+      "launch_env_scope": {
+        "ALPACA_CRYPTO_UNIVERSE": "none",
+        "CRYPTO_SYMBOLS": "",
+        "DAILY_SNAPSHOT_PATH": "logs\\paper_validation_btcusd\\daily_snapshot.csv",
+        "DECISION_LOG_PATH": "logs\\paper_validation_btcusd\\decisions.csv",
+        "FILL_LOG_PATH": "logs\\paper_validation_btcusd\\fills.csv",
+        "RUNTIME_REGISTRY_PATH": "logs/runtime/runtime_registry.json",
+        "SYMBOL": "BTC/USD",
+        "SYMBOLS": "BTC/USD"
+      },
+      "mode": "live",
+      "session_id": "btcusd-bac6933b73ee",
+      "started_at_utc": "2026-04-28T20:57:03.850867+00:00",
+      "symbol": "BTC/USD",
+      "was_live_mode": true,
+      "was_manual_recovery": false
+    },
+    {
+      "end_reason": "operator_stop",
+      "ended_at_utc": "2026-04-28T20:59:53.468819+00:00",
+      "exit_code": 0,
+      "launch_command": [
+        "C:\\Users\\Beau\\ai_trading_bot\\.venv\\Scripts\\python.exe",
+        "-m",
+        "tradingbot.app.main",
+        "--mode",
+        "live"
+      ],
+      "launch_env_scope": {
+        "ALPACA_CRYPTO_UNIVERSE": "none",
+        "CRYPTO_SYMBOLS": "",
+        "DAILY_SNAPSHOT_PATH": "logs\\paper_validation_btcusd\\daily_snapshot.csv",
+        "DECISION_LOG_PATH": "logs\\paper_validation_btcusd\\decisions.csv",
+        "FILL_LOG_PATH": "logs\\paper_validation_btcusd\\fills.csv",
+        "RUNTIME_REGISTRY_PATH": "logs/runtime/runtime_registry.json",
+        "SYMBOL": "BTC/USD",
+        "SYMBOLS": "BTC/USD"
+      },
+      "mode": "live",
+      "session_id": "btcusd-d174cdd90c6b",
+      "started_at_utc": "2026-04-28T20:59:33.667043+00:00",
+      "symbol": "BTC/USD",
+      "was_live_mode": true,
+      "was_manual_recovery": true
+    }
+  ],
+  "registry_version": 1,
+  "updated_at_utc": "2026-04-28T20:59:53.468819+00:00"
+}
