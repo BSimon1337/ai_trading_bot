@@ -10,6 +10,8 @@ from tests.fixtures.monitor.build_fixtures import (
     create_monitor_fixture,
     recent_control_action,
     recent_decision,
+    runtime_registry_lifecycle_event,
+    runtime_registry_runtime,
     write_decisions,
     write_malformed_csv,
     write_runtime_registry,
@@ -299,6 +301,32 @@ def test_load_monitor_configuration_merges_runtime_registry_state(tmp_path, monk
     assert instance.runtime_started_at_utc == "2026-04-28T01:55:00+00:00"
 
 
+def test_load_monitor_configuration_uses_configured_observability_limits(tmp_path, monkeypatch):
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-30T00:46:00+00:00",
+            "managed_runtimes": [runtime_registry_runtime(symbol="BTC/USD")],
+            "recent_sessions": [],
+            "lifecycle_events": [],
+            "recent_control_actions": [],
+        },
+    )
+    monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
+    config = make_bot_config(
+        symbols=("BTC/USD",),
+        monitor_runtime_event_limit=7,
+        monitor_active_warning_limit=3,
+    )
+
+    monitor_config = load_monitor_configuration(config=config, symbols=("BTC/USD",))
+
+    assert monitor_config.runtime_event_limit == 7
+    assert monitor_config.active_warning_limit == 3
+
+
 def test_summarize_instance_preserves_runtime_registry_metadata(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
     instance = DashboardInstance(
@@ -361,6 +389,13 @@ def test_dashboard_status_includes_runtime_registry_fields_on_instance_payload(t
     assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
     assert item["last_lifecycle_event"] == "running"
     assert item["is_fresh_runtime_session"] is True
+    assert item["status_reason"] == "Runtime is running."
+    assert item["recent_runtime_events"]
+    assert any(event["runtime_phase"] == "running" for event in item["recent_runtime_events"])
+    assert item["active_warnings"] == []
+    assert item["latest_order_lifecycle"]["lifecycle_state"] == "no_order"
+    assert item["freshness_state"] in {"current", "provisional", "stale", "historical", "unavailable"}
+    assert item["freshness_explanation"]
 
 
 def test_dashboard_status_includes_control_availability_fields_per_instance(tmp_path):
@@ -1151,6 +1186,52 @@ def test_dashboard_status_uses_provisional_fill_state_when_fill_is_newer_than_sn
     assert item["cash"] == 63.414264
     assert item["held_value_source"] == VALUE_SOURCE_FILL_DELTA
     assert item["portfolio_is_provisional"] is True
+    assert item["freshness_state"] == "provisional"
+    assert "fresher fill evidence" in item["freshness_explanation"]
+
+
+def test_dashboard_status_exposes_symbol_scoped_warning_events(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "broker_rejection", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["active_warnings"]
+    assert item["active_warnings"][0]["symbol"] == "BTC/USD"
+    assert item["active_warnings"][0]["warning_type"] == "broker_rejection"
+
+
+def test_dashboard_status_exposes_symbol_scoped_runtime_event_summary(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime is running.",
+        runtime_session_id="session-btc",
+        runtime_last_seen_utc="2026-04-30T00:46:00+00:00",
+        last_lifecycle_event="running",
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert any(event["symbol"] == "BTC/USD" for event in item["recent_runtime_events"])
+    assert any(event["runtime_session_id"] == "session-btc" for event in item["recent_runtime_events"])
+    assert any(event["event_source"] == "runtime_manager" for event in item["recent_runtime_events"])
 
 
 def test_dashboard_status_prefers_live_badge_for_running_managed_stock_runtime_without_trade_rows(tmp_path):

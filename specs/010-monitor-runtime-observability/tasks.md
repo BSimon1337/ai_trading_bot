@@ -29,13 +29,13 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Extend shared monitor observability helpers and constants in `tradingbot/app/monitor.py`
-- [ ] T005 [P] Add runtime-manager reconciliation support needed by monitor refreshes in `tradingbot/app/runtime_manager.py`
-- [ ] T006 [P] Add or update monitor configuration defaults for observability limits and event retention in `tradingbot/config/settings.py`
-- [ ] T007 [P] Expand monitor fixture builders for mixed runtime, warning, and provisional-state scenarios in `tests/fixtures/monitor/build_fixtures.py`
-- [ ] T008 Add foundational unit coverage for shared observability parsing and reconciliation paths in `tests/unit/test_monitor_data.py` and `tests/unit/test_runtime_manager.py`
-- [ ] T009 Add foundational contract expectations for the expanded monitor payload in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T010 Add foundational tray-state alignment coverage for reconciled runtime truth in `tests/unit/test_tray_state.py`
+- [x] T004 Extend shared monitor observability helpers and constants in `tradingbot/app/monitor.py`
+- [x] T005 [P] Add runtime-manager reconciliation support needed by monitor refreshes in `tradingbot/app/runtime_manager.py`
+- [x] T006 [P] Add or update monitor configuration defaults for observability limits and event retention in `tradingbot/config/settings.py`
+- [x] T007 [P] Expand monitor fixture builders for mixed runtime, warning, and provisional-state scenarios in `tests/fixtures/monitor/build_fixtures.py`
+- [x] T008 Add foundational unit coverage for shared observability parsing and reconciliation paths in `tests/unit/test_monitor_data.py` and `tests/unit/test_runtime_manager.py`
+- [x] T009 Add foundational contract expectations for the expanded monitor payload in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T010 Add foundational tray-state alignment coverage for reconciled runtime truth in `tests/unit/test_tray_state.py`
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 

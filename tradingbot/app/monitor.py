@@ -41,6 +41,8 @@ VALUE_SOURCE_UNAVAILABLE = "unavailable"
 DEFAULT_HEADLINE_PREVIEW_LIMIT = 3
 DEFAULT_SENTIMENT_TREND_LIMIT = 5
 DEFAULT_CONTROL_ACTIVITY_LIMIT = 25
+DEFAULT_RUNTIME_EVENT_LIMIT = 10
+DEFAULT_ACTIVE_WARNING_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,50 @@ class SentimentTrendEntry:
 
 
 @dataclass(frozen=True)
+class RuntimeEventEntry:
+    event_id: str = ""
+    symbol: str = ""
+    timestamp_utc: str = ""
+    mode_context: str = ""
+    runtime_phase: str = ""
+    event_source: str = ""
+    summary: str = ""
+    runtime_session_id: str = ""
+
+
+@dataclass(frozen=True)
+class WarningEvent:
+    warning_id: str = ""
+    symbol: str = ""
+    severity: str = "warning"
+    warning_type: str = ""
+    origin: str = ""
+    timestamp_utc: str = ""
+    message: str = ""
+    is_active: bool = True
+
+
+@dataclass(frozen=True)
+class OrderLifecycleSummary:
+    action_side: str = "n/a"
+    lifecycle_state: str = "no_order"
+    lifecycle_source: str = "n/a"
+    event_time_utc: str = ""
+    is_terminal: bool = False
+    display_summary: str = "No recent order lifecycle is available."
+
+
+@dataclass(frozen=True)
+class EvidenceFreshnessState:
+    freshness_label: str = "unavailable"
+    decision_freshness: str = "unavailable"
+    fill_freshness: str = "unavailable"
+    snapshot_freshness: str = "unavailable"
+    runtime_freshness: str = "unavailable"
+    explanation: str = "No current evidence is available."
+
+
+@dataclass(frozen=True)
 class DashboardInstance:
     label: str
     symbols: tuple[str, ...]
@@ -198,6 +244,8 @@ class MonitorConfiguration:
     tray_enabled: bool = True
     read_only: bool = True
     runtime_registry_path: Path = Path("logs/runtime/runtime_registry.json")
+    runtime_event_limit: int = DEFAULT_RUNTIME_EVENT_LIMIT
+    active_warning_limit: int = DEFAULT_ACTIVE_WARNING_LIMIT
     recent_control_actions: tuple[ManagedControlAction, ...] = ()
     instances: tuple[DashboardInstance, ...] = ()
 
@@ -404,6 +452,20 @@ def load_monitor_configuration(
     historical_issue_limit = _safe_int(os.getenv("MONITOR_HISTORICAL_ISSUE_LIMIT"), DEFAULT_HISTORY_ISSUE_LIMIT)
     dashboard_host = os.getenv("MONITOR_HOST", "127.0.0.1").strip() or "127.0.0.1"
     tray_enabled = os.getenv("MONITOR_TRAY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    runtime_event_limit = _safe_int(
+        os.getenv(
+            "MONITOR_RUNTIME_EVENT_LIMIT",
+            getattr(config, "monitor_runtime_event_limit", DEFAULT_RUNTIME_EVENT_LIMIT) if config is not None else DEFAULT_RUNTIME_EVENT_LIMIT,
+        ),
+        DEFAULT_RUNTIME_EVENT_LIMIT,
+    )
+    active_warning_limit = _safe_int(
+        os.getenv(
+            "MONITOR_ACTIVE_WARNING_LIMIT",
+            getattr(config, "monitor_active_warning_limit", DEFAULT_ACTIVE_WARNING_LIMIT) if config is not None else DEFAULT_ACTIVE_WARNING_LIMIT,
+        ),
+        DEFAULT_ACTIVE_WARNING_LIMIT,
+    )
     runtime_registry_path = Path(
         os.getenv(
             "RUNTIME_REGISTRY_PATH",
@@ -428,6 +490,8 @@ def load_monitor_configuration(
         tray_enabled=tray_enabled,
         read_only=True,
         runtime_registry_path=runtime_registry_path,
+        runtime_event_limit=runtime_event_limit,
+        active_warning_limit=active_warning_limit,
         recent_control_actions=recent_control_actions,
         instances=discover_monitor_instances(
             config=config,
@@ -564,6 +628,206 @@ def _control_action_to_dict(action: ManagedControlAction) -> dict[str, Any]:
         "outcome_message": action.outcome_message,
         "runtime_session_id": action.runtime_session_id,
     }
+
+
+def _runtime_event_to_dict(event: RuntimeEventEntry) -> dict[str, Any]:
+    return {
+        "event_id": event.event_id,
+        "symbol": event.symbol,
+        "timestamp_utc": event.timestamp_utc,
+        "mode_context": event.mode_context,
+        "runtime_phase": event.runtime_phase,
+        "event_source": event.event_source,
+        "summary": event.summary,
+        "runtime_session_id": event.runtime_session_id,
+    }
+
+
+def _warning_event_to_dict(event: WarningEvent) -> dict[str, Any]:
+    return {
+        "warning_id": event.warning_id,
+        "symbol": event.symbol,
+        "severity": event.severity,
+        "warning_type": event.warning_type,
+        "origin": event.origin,
+        "timestamp_utc": event.timestamp_utc,
+        "message": event.message,
+        "is_active": event.is_active,
+    }
+
+
+def _order_lifecycle_to_dict(summary: OrderLifecycleSummary) -> dict[str, Any]:
+    return {
+        "action_side": summary.action_side,
+        "lifecycle_state": summary.lifecycle_state,
+        "lifecycle_source": summary.lifecycle_source,
+        "event_time_utc": summary.event_time_utc,
+        "is_terminal": summary.is_terminal,
+        "display_summary": summary.display_summary,
+    }
+
+
+def _freshness_bucket(timestamp_value: str | None, *, stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES) -> str:
+    timestamp = _parse_instance_timestamp(timestamp_value)
+    if timestamp is None:
+        return "unavailable"
+    age = _age_minutes(timestamp)
+    if age is not None and age > stale_after_minutes:
+        return "stale"
+    return "current"
+
+
+def _runtime_events_for_instance(
+    instance: DashboardInstance,
+    latest_decision: DecisionSummary,
+    latest_fill: FillSummary,
+    *,
+    limit: int = DEFAULT_RUNTIME_EVENT_LIMIT,
+) -> tuple[RuntimeEventEntry, ...]:
+    events: list[RuntimeEventEntry] = []
+    if instance.last_lifecycle_event or instance.runtime_status_message:
+        events.append(
+            RuntimeEventEntry(
+                event_id=f"{instance.label}-runtime-{instance.runtime_session_id or instance.last_lifecycle_event or 'event'}",
+                symbol=instance.label,
+                timestamp_utc=instance.runtime_last_seen_utc or instance.runtime_started_at_utc or instance.last_updated_at or "",
+                mode_context=instance.runtime_mode_context or latest_decision.mode or "",
+                runtime_phase=instance.last_lifecycle_event or instance.runtime_state or "runtime",
+                event_source="runtime_manager",
+                summary=instance.runtime_status_message or instance.status.message,
+                runtime_session_id=instance.runtime_session_id,
+            )
+        )
+    if latest_fill.timestamp:
+        events.append(
+            RuntimeEventEntry(
+                event_id=f"{instance.label}-fill-{latest_fill.order_id or latest_fill.timestamp}",
+                symbol=instance.label,
+                timestamp_utc=latest_fill.timestamp,
+                mode_context=latest_fill.mode or instance.runtime_mode_context or "",
+                runtime_phase=(latest_fill.result or "fill").strip().lower() or "fill",
+                event_source="fill_log",
+                summary=f"{(latest_fill.side or 'order').strip().lower()} {latest_fill.result or 'event'}".strip(),
+                runtime_session_id=instance.runtime_session_id,
+            )
+        )
+    elif latest_decision.timestamp:
+        events.append(
+            RuntimeEventEntry(
+                event_id=f"{instance.label}-decision-{latest_decision.timestamp}",
+                symbol=instance.label,
+                timestamp_utc=latest_decision.timestamp,
+                mode_context=latest_decision.mode or instance.runtime_mode_context or "",
+                runtime_phase=(latest_decision.result or latest_decision.action or "decision").strip().lower() or "decision",
+                event_source="decision_log",
+                summary=latest_decision.reason or f"{latest_decision.action or 'decision'} {latest_decision.result or ''}".strip(),
+                runtime_session_id=instance.runtime_session_id,
+            )
+        )
+    events = [event for event in events if event.timestamp_utc or event.summary]
+    events.sort(key=lambda event: _parse_instance_timestamp(event.timestamp_utc) or pd.Timestamp.min.tz_localize("UTC"), reverse=True)
+    return tuple(events[:limit])
+
+
+def _warning_events_for_instance(
+    instance: DashboardInstance,
+    *,
+    limit: int = DEFAULT_ACTIVE_WARNING_LIMIT,
+) -> tuple[WarningEvent, ...]:
+    warnings = [
+        WarningEvent(
+            warning_id=f"{instance.label}-{issue.category}-{index}",
+            symbol=instance.label,
+            severity=issue.severity,
+            warning_type=issue.category,
+            origin=issue.source,
+            timestamp_utc=issue.timestamp,
+            message=issue.message,
+            is_active=True,
+        )
+        for index, issue in enumerate(instance.issues, start=1)
+    ]
+    return tuple(warnings[:limit])
+
+
+def _latest_order_lifecycle_for_instance(
+    latest_decision: DecisionSummary,
+    latest_fill: FillSummary,
+) -> OrderLifecycleSummary:
+    fill_state = (latest_fill.result or "").strip().lower()
+    if latest_fill.timestamp:
+        terminal = fill_state in {"filled", "rejected", "canceled"}
+        state = fill_state or "fill_event"
+        side = (latest_fill.side or "n/a").strip().lower() or "n/a"
+        return OrderLifecycleSummary(
+            action_side=side,
+            lifecycle_state=state,
+            lifecycle_source="fill_log",
+            event_time_utc=latest_fill.timestamp,
+            is_terminal=terminal,
+            display_summary=f"{side} {state}".strip(),
+        )
+    decision_state = (latest_decision.result or "").strip().lower()
+    decision_action = (latest_decision.action or "").strip().lower()
+    if latest_decision.timestamp and decision_action in {"buy", "sell"}:
+        state = decision_state or "submitted"
+        return OrderLifecycleSummary(
+            action_side=decision_action,
+            lifecycle_state=state,
+            lifecycle_source="decision_log",
+            event_time_utc=latest_decision.timestamp,
+            is_terminal=state in {"filled", "rejected", "canceled"},
+            display_summary=f"{decision_action} {state}".strip(),
+        )
+    return OrderLifecycleSummary()
+
+
+def _freshness_state_for_instance(
+    instance: DashboardInstance,
+    latest_decision: DecisionSummary,
+    latest_fill: FillSummary,
+    latest_snapshot: SnapshotSummary,
+    *,
+    is_provisional: bool,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> EvidenceFreshnessState:
+    if instance.evidence_scope == "historical":
+        return EvidenceFreshnessState(
+            freshness_label="historical",
+            decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+            fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+            snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+            runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+            explanation="This symbol currently reflects historical evidence outside the active monitor window.",
+        )
+    if instance.status.state == "no_data":
+        return EvidenceFreshnessState(explanation="No current runtime evidence is available for this symbol.")
+    if instance.status.state == "stale":
+        return EvidenceFreshnessState(
+            freshness_label="stale",
+            decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+            fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+            snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+            runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+            explanation=instance.status.message,
+        )
+    if is_provisional:
+        return EvidenceFreshnessState(
+            freshness_label="provisional",
+            decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+            fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+            snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+            runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+            explanation="Portfolio values are temporarily derived from fresher fill evidence than the latest snapshot.",
+        )
+    return EvidenceFreshnessState(
+        freshness_label="current",
+        decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+        fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+        snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+        runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+        explanation="Current monitor evidence is aligned with the latest active runtime state.",
+    )
 
 
 def _load_recent_control_actions(
@@ -1478,11 +1742,29 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         latest_decision.mode or latest_snapshot.mode,
         config=config,
     )
+    runtime_event_limit = getattr(config, "monitor_runtime_event_limit", DEFAULT_RUNTIME_EVENT_LIMIT) if config is not None else DEFAULT_RUNTIME_EVENT_LIMIT
+    active_warning_limit = getattr(config, "monitor_active_warning_limit", DEFAULT_ACTIVE_WARNING_LIMIT) if config is not None else DEFAULT_ACTIVE_WARNING_LIMIT
+    recent_runtime_events = _runtime_events_for_instance(
+        instance,
+        latest_decision,
+        latest_fill,
+        limit=runtime_event_limit,
+    )
+    active_warnings = _warning_events_for_instance(instance, limit=active_warning_limit)
+    latest_order_lifecycle = _latest_order_lifecycle_for_instance(latest_decision, latest_fill)
+    freshness_state = _freshness_state_for_instance(
+        instance,
+        latest_decision,
+        latest_fill,
+        latest_snapshot,
+        is_provisional=effective_portfolio["is_provisional"],
+    )
     return {
         "label": instance.label,
         "status": _status_to_dict(instance.status),
         "status_state": instance.status.state,
         "status_severity": instance.status.severity,
+        "status_reason": instance.status.message,
         "symbols": list(instance.symbols),
         "asset_classes": list(instance.asset_classes),
         "latest_action": latest_decision.action or "n/a",
@@ -1548,6 +1830,11 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         "held_value_source": effective_portfolio["held_value_source"],
         "latest_fill_price": effective_portfolio["latest_fill_price"],
         "portfolio_is_provisional": effective_portfolio["is_provisional"],
+        "recent_runtime_events": [_runtime_event_to_dict(event) for event in recent_runtime_events],
+        "active_warnings": [_warning_event_to_dict(event) for event in active_warnings],
+        "latest_order_lifecycle": _order_lifecycle_to_dict(latest_order_lifecycle),
+        "freshness_state": freshness_state.freshness_label,
+        "freshness_explanation": freshness_state.explanation,
         "decisions_today": decisions_today,
         "fills_today": fills_today,
         "equity_points": equity_points,

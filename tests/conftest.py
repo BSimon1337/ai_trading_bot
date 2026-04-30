@@ -42,6 +42,8 @@ def make_bot_config(**overrides) -> BotConfig:
         runtime_registry_path="logs/test/runtime_registry.json",
         runtime_recent_sessions_limit=25,
         runtime_recent_control_actions_limit=25,
+        monitor_runtime_event_limit=10,
+        monitor_active_warning_limit=5,
     )
     defaults.update(overrides)
     return BotConfig(**defaults)

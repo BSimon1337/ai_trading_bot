@@ -416,6 +416,33 @@ def test_reconcile_runtime_registry_marks_dead_running_process_failed(tmp_path: 
     assert reconciled.recent_sessions[-1].end_reason == "process_exit_detected"
 
 
+def test_reconcile_runtime_registry_leaves_stopped_runtime_unchanged(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+    registry = RuntimeRegistry(
+        managed_runtimes=(
+            _runtime(
+                symbol="BTC/USD",
+                lifecycle_state="stopped",
+                session_id="session-btc",
+                pid=None,
+            ),
+        ),
+        recent_sessions=(_session(symbol="BTC/USD", session_id="session-btc"),),
+    )
+    save_runtime_registry(registry_path, registry)
+
+    reconciled = reconcile_runtime_registry(
+        config,
+        registry_path=registry_path,
+        process_is_running=lambda pid: False,
+    )
+    runtime = runtime_state_index(reconciled)["BTC/USD"]
+
+    assert runtime.lifecycle_state == "stopped"
+    assert runtime.failure_reason == ""
+
+
 def test_start_managed_runtime_uses_live_cli_mode_even_for_paper_execution(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
     config = make_bot_config(runtime_registry_path=str(registry_path))

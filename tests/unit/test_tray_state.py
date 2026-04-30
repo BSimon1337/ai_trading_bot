@@ -190,3 +190,23 @@ def test_tray_state_mapping_includes_latest_control_outcome_summary():
     assert "Latest control: restart BTC/USD (crypto) succeeded." in state.tooltip
     assert "Live controls: 1." in state.tooltip
     assert "Paper controls: 1." in state.tooltip
+
+
+def test_tray_state_mapping_reports_reconciled_runtime_counts_even_without_issue_rows():
+    payload = {
+        "status_updated_utc": "2026-04-30 00:46:00 UTC",
+        "aggregate_state": "live",
+        "instances": [
+            {"label": "BTC/USD", "runtime_state": "running", "runtime_last_seen_utc": "2026-04-30T00:46:00+00:00"},
+            {"label": "ETH/USD", "runtime_state": "failed", "runtime_last_seen_utc": "2026-04-30T00:45:30+00:00"},
+        ],
+        "issues": [],
+        "notes": [],
+        "recent_control_actions": [],
+        "historical_context": {"historical_issue_count": 0},
+    }
+
+    state = tray_state_from_dashboard(payload)
+
+    assert "Running runtimes: 1." in state.tooltip
+    assert "Failed runtimes: 1." in state.tooltip

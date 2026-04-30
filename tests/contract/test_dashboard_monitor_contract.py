@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from tests.conftest import make_bot_config
-from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, write_runtime_registry
+from tests.fixtures.monitor.build_fixtures import (
+    create_monitor_fixture,
+    runtime_registry_lifecycle_event,
+    runtime_registry_runtime,
+    write_runtime_registry,
+)
 from tradingbot.app.monitor import DashboardInstance, create_app, load_monitor_configuration
 
 
@@ -56,6 +61,7 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert payload["instances"][0]["label"] == "BTC/USD"
     assert set(payload["instances"][0]) >= {
         "status",
+        "status_reason",
         "symbols",
         "latest_action",
         "latest_reason",
@@ -94,6 +100,12 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "notes",
         "held_value",
         "held_value_source",
+        "portfolio_is_provisional",
+        "recent_runtime_events",
+        "active_warnings",
+        "latest_order_lifecycle",
+        "freshness_state",
+        "freshness_explanation",
         "sentiment_label",
         "sentiment_probability",
         "sentiment_source",
@@ -131,12 +143,7 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
             "updated_at_utc": "2026-04-28T02:00:00+00:00",
             "managed_runtimes": [
                 {
-                    "symbol": "BTC/USD",
-                    "instance_label": "BTC/USD",
-                    "mode": "live",
-                    "lifecycle_state": "running",
-                    "session_id": "session-btc",
-                    "pid": 2468,
+                    **runtime_registry_runtime(symbol="BTC/USD", session_id="session-btc"),
                     "started_at_utc": "2026-04-28T01:55:00+00:00",
                     "last_seen_utc": "2026-04-28T02:00:00+00:00",
                     "decision_log_path": str(fixture_root / "decisions.csv"),
@@ -145,16 +152,7 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
                 }
             ],
             "recent_sessions": [],
-            "lifecycle_events": [
-                {
-                    "timestamp_utc": "2026-04-28T02:00:00+00:00",
-                    "symbol": "BTC/USD",
-                    "session_id": "session-btc",
-                    "event_type": "running",
-                    "message": "Runtime is running.",
-                    "source": "runtime_manager",
-                }
-            ],
+            "lifecycle_events": [runtime_registry_lifecycle_event(symbol="BTC/USD", session_id="session-btc")],
             "recent_control_actions": [
                 {
                     "action_id": "btcusd-start",
@@ -188,6 +186,11 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
     assert item["last_lifecycle_event"] == "running"
     assert item["is_fresh_runtime_session"] is True
+    assert item["status_reason"] == "Runtime is running."
+    assert any(event["runtime_phase"] == "running" for event in item["recent_runtime_events"])
+    assert item["active_warnings"] == []
+    assert item["latest_order_lifecycle"]["lifecycle_state"] == "no_order"
+    assert item["freshness_state"] in {"current", "provisional", "stale", "historical", "unavailable"}
     assert item["control_asset_class"] == "crypto"
     assert item["control_mode_context"] == "live"
     assert item["control_runtime_state"] == "running"
