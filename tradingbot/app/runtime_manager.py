@@ -561,7 +561,7 @@ def reconcile_runtime_registry(
     for runtime in registry.managed_runtimes:
         if runtime.lifecycle_state not in {"starting", "running", "restarting", "stopping"}:
             continue
-        if runtime.pid is None or process_is_running(runtime.pid):
+        if runtime.pid is not None and process_is_running(runtime.pid):
             continue
 
         changed = True

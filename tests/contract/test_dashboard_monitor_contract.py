@@ -69,6 +69,7 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "latest_asset_class",
         "latest_update_utc",
         "runtime_state",
+        "runtime_mode_context",
         "runtime_status_message",
         "runtime_session_id",
         "runtime_pid",
@@ -179,6 +180,7 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     item = payload["instances"][0]
 
     assert item["runtime_state"] == "running"
+    assert item["runtime_mode_context"] == "live"
     assert item["runtime_status_message"] == "Runtime is running."
     assert item["runtime_session_id"] == "session-btc"
     assert item["runtime_pid"] == 2468
@@ -345,6 +347,7 @@ def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path)
     assert payload["instances"][0]["status"]["state"] == "stopped"
     assert "Runtime stopped by operator." in page_text
     assert "lifecycle stopped" in page_text
+    assert "Historical evidence below is from the most recent managed runtime session." in page_text
 
 
 def test_dashboard_contract_prefers_fresh_runtime_session_over_old_failed_logs(tmp_path):
@@ -379,6 +382,40 @@ def test_dashboard_contract_prefers_fresh_runtime_session_over_old_failed_logs(t
     assert payload["instances"][0]["status"]["state"] == "running"
     assert payload["instances"][0]["is_fresh_runtime_session"] is True
     assert "fresh session" in page_text
+
+
+def test_dashboard_contract_prefers_runtime_mode_context_over_stale_latest_mode(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "spy", "no_data", symbol="SPY")
+    paths["decisions"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
+                "2026-04-30T17:43:51+00:00,paper,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="SPY",
+                symbols=("SPY",),
+                asset_classes=("stock",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+                runtime_status_message="Runtime is running.",
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    assert payload["instances"][0]["status"]["state"] == "live"
+    assert payload["instances"][0]["runtime_mode_context"] == "live"
+    assert payload["instances"][0]["latest_mode"] == "live"
 
 
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):

@@ -49,19 +49,19 @@
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Add unit coverage for runtime reconciliation and stale-running cleanup in `tests/unit/test_runtime_manager.py`
-- [ ] T012 [P] [US1] Add monitor data tests for reconciled runtime-state precedence over stale evidence in `tests/unit/test_monitor_data.py`
-- [ ] T013 [P] [US1] Add contract checks for runtime-state and mode-context payload fields in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T014 [P] [US1] Add smoke coverage for refreshed monitor state after managed runtime transitions in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T011 [P] [US1] Add unit coverage for runtime reconciliation and stale-running cleanup in `tests/unit/test_runtime_manager.py`
+- [x] T012 [P] [US1] Add monitor data tests for reconciled runtime-state precedence over stale evidence in `tests/unit/test_monitor_data.py`
+- [x] T013 [P] [US1] Add contract checks for runtime-state and mode-context payload fields in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T014 [P] [US1] Add smoke coverage for refreshed monitor state after managed runtime transitions in `tests/smoke/test_monitor_entrypoint.py`
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Reconcile managed runtime truth during monitor status assembly in `tradingbot/app/monitor.py`
-- [ ] T016 [US1] Harden runtime-manager session reconciliation for missing or exited child processes in `tradingbot/app/runtime_manager.py`
-- [ ] T017 [US1] Standardize badge and mode-context precedence for stock and crypto cards in `tradingbot/app/monitor.py`
-- [ ] T018 [US1] Render reconciled runtime truth and stopped-vs-historical messaging in `templates/monitor.html`
-- [ ] T019 [US1] Keep tray runtime summaries aligned with reconciled dashboard truth in `tradingbot/app/tray.py`
-- [ ] T020 [US1] Preserve correct monitor app refresh behavior for runtime-state changes in `tradingbot/app/monitor_app.py`
+- [x] T015 [US1] Reconcile managed runtime truth during monitor status assembly in `tradingbot/app/monitor.py`
+- [x] T016 [US1] Harden runtime-manager session reconciliation for missing or exited child processes in `tradingbot/app/runtime_manager.py`
+- [x] T017 [US1] Standardize badge and mode-context precedence for stock and crypto cards in `tradingbot/app/monitor.py`
+- [x] T018 [US1] Render reconciled runtime truth and stopped-vs-historical messaging in `templates/monitor.html`
+- [x] T019 [US1] Keep tray runtime summaries aligned with reconciled dashboard truth in `tradingbot/app/tray.py`
+- [x] T020 [US1] Preserve correct monitor app refresh behavior for runtime-state changes in `tradingbot/app/monitor_app.py`
 
 **Checkpoint**: User Story 1 should now make the dashboard trustworthy as a source of current runtime truth.
 

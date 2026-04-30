@@ -170,8 +170,16 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     warning_count = sum(1 for issue in issues if issue.get("severity") == "warning")
     running_runtime_count = sum(1 for instance in instances if instance.get("runtime_state") == "running")
     failed_runtime_count = sum(1 for instance in instances if instance.get("runtime_state") == "failed")
-    live_control_count = sum(1 for instance in instances if instance.get("control_mode_context") == "live")
-    paper_control_count = sum(1 for instance in instances if instance.get("control_mode_context") == "paper")
+    live_control_count = sum(
+        1
+        for instance in instances
+        if (instance.get("runtime_mode_context") or instance.get("control_mode_context")) == "live"
+    )
+    paper_control_count = sum(
+        1
+        for instance in instances
+        if (instance.get("runtime_mode_context") or instance.get("control_mode_context")) == "paper"
+    )
     latest_runtime_refresh = max(
         (
             str(instance.get("runtime_last_seen_utc", "") or "")

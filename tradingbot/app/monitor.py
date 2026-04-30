@@ -503,6 +503,65 @@ def load_monitor_configuration(
     )
 
 
+def _normalized_runtime_mode_context(instance: DashboardInstance) -> str:
+    return (instance.runtime_mode_context or "").strip().lower()
+
+
+def _managed_runtime_mode_context(
+    instance: DashboardInstance,
+    latest_decision: DecisionSummary | None = None,
+    latest_snapshot: SnapshotSummary | None = None,
+) -> str:
+    runtime_mode = _normalized_runtime_mode_context(instance)
+    if runtime_mode in {"live", "paper"}:
+        return runtime_mode
+    latest_mode = (latest_decision.mode if latest_decision is not None else "") or (
+        latest_snapshot.mode if latest_snapshot is not None else ""
+    )
+    latest_mode = latest_mode.strip().lower()
+    if latest_mode in {"active-live", "live"}:
+        return "live"
+    if latest_mode == "paper":
+        return "paper"
+    return runtime_mode
+
+
+def _runtime_truth_instances(
+    instances: tuple[DashboardInstance, ...],
+    *,
+    config: BotConfig,
+) -> tuple[tuple[DashboardInstance, ...], tuple[ManagedControlAction, ...]]:
+    registry = reconcile_runtime_registry(config)
+    runtime_index = runtime_state_index(registry)
+    lifecycle_index = lifecycle_event_index(registry)
+    enriched: list[DashboardInstance] = []
+    for instance in instances:
+        symbol = instance.symbols[0] if instance.symbols else instance.label
+        runtime = runtime_index.get(symbol)
+        lifecycle_event = lifecycle_index.get(symbol)
+        if runtime is None:
+            enriched.append(instance)
+            continue
+        enriched.append(
+            DashboardInstance(
+                **{
+                    **instance.__dict__,
+                    "runtime_state": runtime.lifecycle_state,
+                    "runtime_status_message": runtime.failure_reason
+                    or (lifecycle_event.message if lifecycle_event is not None else instance.runtime_status_message),
+                    "runtime_session_id": runtime.session_id,
+                    "runtime_pid": runtime.pid,
+                    "runtime_started_at_utc": runtime.started_at_utc,
+                    "runtime_last_seen_utc": runtime.last_seen_utc,
+                    "last_lifecycle_event": "" if lifecycle_event is None else lifecycle_event.event_type,
+                    "is_fresh_runtime_session": runtime.lifecycle_state in {"starting", "running", "restarting"},
+                    "runtime_mode_context": runtime.mode or instance.runtime_mode_context,
+                }
+            )
+        )
+    return tuple(enriched), registry.recent_control_actions
+
+
 def _control_availability_for_instance(
     instance: DashboardInstance,
     latest_mode: str = "",
@@ -1421,12 +1480,14 @@ def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
 def _classify_status(
     instance: DashboardInstance,
     latest_decision: DecisionSummary | None,
+    latest_snapshot: SnapshotSummary | None,
     issues: list[IssueSummary],
     age_minutes: float | None,
     stale_after_minutes: int,
 ) -> RuntimeStatus:
     runtime_state = instance.runtime_state
     runtime_message = instance.runtime_status_message or "Runtime state updated by runtime manager."
+    runtime_mode = _managed_runtime_mode_context(instance, latest_decision, latest_snapshot)
     if runtime_state == "failed":
         return RuntimeStatus("failed", "critical", runtime_message, age_minutes)
     if runtime_state == "blocked":
@@ -1438,9 +1499,12 @@ def _classify_status(
     if runtime_state == "stopping":
         return RuntimeStatus("stopped", "warning", runtime_message, age_minutes)
     if runtime_state in {"starting", "restarting"}:
+        if runtime_mode == "live":
+            return RuntimeStatus("live", "info", runtime_message or "Managed live runtime is starting.", age_minutes)
+        if runtime_mode == "paper":
+            return RuntimeStatus("paper", "info", runtime_message or "Managed paper runtime is starting.", age_minutes)
         return RuntimeStatus("running", "info", runtime_message, age_minutes)
 
-    runtime_mode = (instance.runtime_mode_context or "").strip().lower()
     if latest_decision is None:
         if runtime_state == "running":
             if runtime_mode == "live":
@@ -1520,11 +1584,17 @@ def _issues_from_evidence(
     stale_after_minutes: int,
     *,
     evidence_scope: str = "active",
+    runtime_state: str = "",
 ) -> list[IssueSummary]:
     issues: list[IssueSummary] = []
     if evidence_scope != "historical":
         issues.extend(result.issue for result in read_results if result.issue is not None)
-    if evidence_scope != "historical" and age_minutes is not None and age_minutes > stale_after_minutes:
+    if (
+        evidence_scope != "historical"
+        and runtime_state not in {"stopped", "stopping"}
+        and age_minutes is not None
+        and age_minutes > stale_after_minutes
+    ):
         issues.append(
             IssueSummary(
                 timestamp=_utc_now_iso(),
@@ -1575,9 +1645,23 @@ def _notes_from_evidence(
     decisions: pd.DataFrame,
     fills: pd.DataFrame,
     snapshot: pd.DataFrame,
+    *,
+    runtime_state: str = "",
+    age_minutes: float | None = None,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
 ) -> list[NoteSummary]:
     del decisions, fills
     notes: list[NoteSummary] = []
+    if runtime_state in {"stopped", "failed"} and age_minutes is not None and age_minutes > stale_after_minutes:
+        notes.append(
+            NoteSummary(
+                timestamp=_utc_now_iso(),
+                symbol="SYSTEM",
+                category="historical_runtime_evidence",
+                message="Historical evidence below is from the most recent managed runtime session.",
+                source="monitor",
+            )
+        )
     if not snapshot.empty:
         recent_snapshot = snapshot.tail(5).to_dict(orient="records")
         for row in recent_snapshot:
@@ -1652,6 +1736,7 @@ def summarize_instance(
         age,
         stale_after_minutes,
         evidence_scope=evidence_scope,
+        runtime_state=instance.runtime_state,
     )
     historical_issues = _historical_issues_from_evidence(
         (decision_result, fill_result, snapshot_result),
@@ -1662,8 +1747,15 @@ def summarize_instance(
         evidence_scope=evidence_scope,
         historical_issue_limit=historical_issue_limit,
     )
-    notes = _notes_from_evidence(active_decisions, active_fills, active_snapshot)
-    status = _classify_status(instance, latest_decision, issues, age, stale_after_minutes)
+    notes = _notes_from_evidence(
+        active_decisions,
+        active_fills,
+        active_snapshot,
+        runtime_state=instance.runtime_state,
+        age_minutes=age,
+        stale_after_minutes=stale_after_minutes,
+    )
+    status = _classify_status(instance, latest_decision, latest_snapshot, issues, age, stale_after_minutes)
     return DashboardInstance(
         label=instance.label,
         symbols=instance.symbols,
@@ -1696,6 +1788,7 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
     latest_decision = instance.latest_decision or DecisionSummary()
     latest_fill = instance.latest_fill or FillSummary()
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
+    effective_mode = _managed_runtime_mode_context(instance, latest_decision, latest_snapshot) or "unknown"
     decisions = normalize_timestamps(safe_read_csv(instance.decision_log_path, source="decisions").dataframe)
     fills = normalize_timestamps(safe_read_csv(instance.fill_log_path, source="fills").dataframe)
     snapshot = _normalize_snapshot_frame(safe_read_csv(instance.snapshot_log_path, source="snapshot").dataframe)
@@ -1739,7 +1832,7 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
                 broker_rejection_count += 1
     control_availability = _control_availability_for_instance(
         instance,
-        latest_decision.mode or latest_snapshot.mode,
+        effective_mode,
         config=config,
     )
     runtime_event_limit = getattr(config, "monitor_runtime_event_limit", DEFAULT_RUNTIME_EVENT_LIMIT) if config is not None else DEFAULT_RUNTIME_EVENT_LIMIT
@@ -1769,11 +1862,12 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         "asset_classes": list(instance.asset_classes),
         "latest_action": latest_decision.action or "n/a",
         "latest_reason": latest_decision.reason or instance.status.message,
-        "latest_mode": latest_decision.mode or instance.runtime_mode_context or "unknown",
+        "latest_mode": effective_mode,
         "latest_asset_class": latest_decision.asset_class or (instance.asset_classes[0] if instance.asset_classes else "unknown"),
         "latest_source": latest_decision.action_source or "n/a",
         "latest_update_utc": instance.last_updated_at,
         "runtime_state": instance.runtime_state,
+        "runtime_mode_context": effective_mode,
         "runtime_status_message": instance.runtime_status_message,
         "runtime_session_id": instance.runtime_session_id,
         "runtime_pid": instance.runtime_pid,
@@ -1948,6 +2042,9 @@ def dashboard_status(
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
 ) -> dict[str, Any]:
     configured = instances if instances is not None else load_monitor_configuration(config=config).instances
+    effective_recent_control_actions = recent_control_actions
+    if config is not None and instances is not None:
+        configured, effective_recent_control_actions = _runtime_truth_instances(configured, config=config)
     summarized = [
         summarize_instance(
             instance,
@@ -1964,7 +2061,7 @@ def dashboard_status(
     recent_activity = _collect_recent_activity(display_instances)
     recent_control_rows, latest_control_updated_at_utc = _load_recent_control_actions(
         config=config,
-        recent_control_actions=recent_control_actions,
+        recent_control_actions=effective_recent_control_actions,
     )
     payload = {
         "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),

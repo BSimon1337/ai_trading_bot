@@ -469,7 +469,7 @@
           </div>
           <div class="mini">
             <div class="k">Mode / Asset</div>
-            <div class="v">{{ instance.latest_mode }} / {{ instance.latest_asset_class }}</div>
+            <div class="v">{{ instance.runtime_mode_context or instance.latest_mode }} / {{ instance.latest_asset_class }}</div>
           </div>
           <div class="mini">
             <div class="k">Last Decision</div>
@@ -550,6 +550,9 @@
         </div>
         <p class="control-message">{{ instance.control_availability_message }}</p>
         <p class="control-context {% if instance.control_mode_context == 'live' %}live{% endif %}">{{ instance.control_confirmation_hint }}</p>
+        {% if instance.runtime_state in ["stopped", "failed"] and instance.last_decision_utc %}
+        <p class="control-context">Historical evidence below is from the most recent managed runtime session.</p>
+        {% endif %}
         {% if instance.issues %}
         <p class="muted" style="margin: 8px 0 0 0;">{{ instance.issues|length }} issue(s): {{ instance.issues[0].category }} - {{ instance.issues[0].message }}</p>
         {% endif %}

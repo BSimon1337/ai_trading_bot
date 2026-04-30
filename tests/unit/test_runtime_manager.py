@@ -416,6 +416,70 @@ def test_reconcile_runtime_registry_marks_dead_running_process_failed(tmp_path: 
     assert reconciled.recent_sessions[-1].end_reason == "process_exit_detected"
 
 
+def test_reconcile_runtime_registry_marks_pidless_running_runtime_failed(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+    registry = RuntimeRegistry(
+        managed_runtimes=(
+            _runtime(
+                symbol="ETH/USD",
+                lifecycle_state="running",
+                session_id="session-eth",
+                pid=None,
+                decision_log_path="logs/paper_validation_ethusd/decisions.csv",
+                fill_log_path="logs/paper_validation_ethusd/fills.csv",
+                snapshot_log_path="logs/paper_validation_ethusd/daily_snapshot.csv",
+            ),
+        ),
+        recent_sessions=(_session(symbol="ETH/USD", session_id="session-eth"),),
+    )
+    save_runtime_registry(registry_path, registry)
+
+    reconciled = reconcile_runtime_registry(
+        config,
+        registry_path=registry_path,
+        process_is_running=lambda pid: True,
+    )
+    runtime = runtime_state_index(reconciled)["ETH/USD"]
+
+    assert runtime.lifecycle_state == "failed"
+    assert runtime.pid is None
+    assert runtime.failure_reason == "Runtime process exited unexpectedly."
+    assert reconciled.recent_sessions[-1].end_reason == "process_exit_detected"
+
+
+def test_reconcile_runtime_registry_marks_pidless_stopping_runtime_stopped(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path))
+    registry = RuntimeRegistry(
+        managed_runtimes=(
+            _runtime(
+                symbol="SOL/USD",
+                lifecycle_state="stopping",
+                session_id="session-sol",
+                pid=None,
+                decision_log_path="logs/paper_validation_solusd/decisions.csv",
+                fill_log_path="logs/paper_validation_solusd/fills.csv",
+                snapshot_log_path="logs/paper_validation_solusd/daily_snapshot.csv",
+            ),
+        ),
+        recent_sessions=(_session(symbol="SOL/USD", session_id="session-sol"),),
+    )
+    save_runtime_registry(registry_path, registry)
+
+    reconciled = reconcile_runtime_registry(
+        config,
+        registry_path=registry_path,
+        process_is_running=lambda pid: True,
+    )
+    runtime = runtime_state_index(reconciled)["SOL/USD"]
+
+    assert runtime.lifecycle_state == "stopped"
+    assert runtime.pid is None
+    assert runtime.failure_reason == ""
+    assert reconciled.recent_sessions[-1].end_reason == "process_already_stopped"
+
+
 def test_reconcile_runtime_registry_leaves_stopped_runtime_unchanged(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
     config = make_bot_config(runtime_registry_path=str(registry_path))

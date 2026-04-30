@@ -302,3 +302,55 @@ def test_monitor_dashboard_control_routes_accept_post_actions(tmp_path):
     ).status_code == 200
     assert calls == [("start", "BTC/USD", "live"), ("stop", "BTC/USD", ""), ("restart", "BTC/USD", "live")]
     assert confirmation_states == ["dashboard_session_trusted"]
+
+
+def test_monitor_app_refreshes_runtime_truth_after_unexpected_exit(monkeypatch, tmp_path):
+    stopped_paths = create_monitor_fixture(tmp_path / "stopped", "healthy", symbol="BTC/USD")
+    failed_paths = create_monitor_fixture(tmp_path / "failed", "healthy", symbol="BTC/USD")
+    config = make_bot_config(symbols=("BTC/USD",), runtime_registry_path=str(tmp_path / "runtime" / "runtime_registry.json"))
+
+    startup_instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=stopped_paths["decisions"],
+        fill_log_path=stopped_paths["fills"],
+        snapshot_log_path=stopped_paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime is running.",
+        runtime_session_id="session-btc-live",
+        runtime_pid=2468,
+    )
+    refreshed_instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=failed_paths["decisions"],
+        fill_log_path=failed_paths["fills"],
+        snapshot_log_path=failed_paths["snapshot"],
+        runtime_state="failed",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime process exited unexpectedly.",
+        runtime_session_id="session-btc-live",
+        last_lifecycle_event="failed",
+    )
+
+    class RefreshedConfig:
+        instances = (refreshed_instance,)
+        recent_control_actions = ()
+
+    monkeypatch.setattr("tradingbot.app.monitor.load_monitor_configuration", lambda config=None: RefreshedConfig())
+
+    client = monitor_app.create_app(
+        instances=(startup_instance,),
+        config=config,
+        refresh_runtime_state=True,
+    ).test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert payload["instances"][0]["runtime_state"] == "failed"
+    assert payload["instances"][0]["status"]["state"] == "failed"
+    assert "Runtime process exited unexpectedly." in page_text
