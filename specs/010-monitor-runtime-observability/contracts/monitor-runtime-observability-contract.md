@@ -25,6 +25,7 @@ Defines the dashboard payload additions and rendering expectations required to m
 **Required invariants**:
 
 - Per-symbol held quantity, held value, and cash must be derived from that symbol's own evidence path.
+- Account-overview cash and equity may be shared account-level values, but they must not be mislabeled or reused as another symbol's held value.
 - Known live or paper mode context must outrank generic running-state wording in card badges.
 - Reconciled managed runtime truth must outrank stale historical trading evidence.
 - Provisional portfolio state must be labeled explicitly.
@@ -47,6 +48,7 @@ Defines the dashboard payload additions and rendering expectations required to m
 - per-symbol reconciled runtime status
 - explicit live or paper badge context when known
 - visible provisional-versus-confirmed portfolio-state labeling
+- clear distinction between symbol-scoped `Held Value` and account-scoped `Account Cash`
 - recent runtime event summaries
 - active symbol-scoped warnings
 - latest order-lifecycle summary

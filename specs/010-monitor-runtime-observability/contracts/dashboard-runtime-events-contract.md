@@ -62,4 +62,5 @@ Defines the operator-facing event and warning behavior required for each symbol 
 
 - Submitted, pending, filled, rejected, canceled, and no-order states remain distinguishable.
 - A recent fill is visible even when the next portfolio snapshot has not yet landed.
+- A recent fill does not cause another symbol's held value or account state to appear on the wrong card while the snapshot is still catching up.
 - A symbol with no recent order state does not inherit another symbol's lifecycle state.

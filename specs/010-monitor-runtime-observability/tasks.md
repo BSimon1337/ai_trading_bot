@@ -121,10 +121,10 @@
 
 **Purpose**: Final documentation, wording cleanup, and full observability validation across all user stories.
 
-- [ ] T039 [P] Update operator documentation for runtime observability behavior in `README.md` and `specs/010-monitor-runtime-observability/quickstart.md`
-- [ ] T040 [P] Reconcile dashboard wording and badge/freshness labels across `templates/monitor.html`, `specs/010-monitor-runtime-observability/contracts/`, and `specs/010-monitor-runtime-observability/spec.md`
-- [ ] T041 [P] Update launcher or monitor usage notes if needed for mixed-symbol observability validation in `start_monitor.ps1` and `README.md`
-- [ ] T042 Run the observability validation bundle from `specs/010-monitor-runtime-observability/quickstart.md` and record outcomes in `specs/010-monitor-runtime-observability/tasks.md`
+- [x] T039 [P] Update operator documentation for runtime observability behavior in `README.md` and `specs/010-monitor-runtime-observability/quickstart.md`
+- [x] T040 [P] Reconcile dashboard wording and badge/freshness labels across `templates/monitor.html`, `specs/010-monitor-runtime-observability/contracts/`, and `specs/010-monitor-runtime-observability/spec.md`
+- [x] T041 [P] Update launcher or monitor usage notes if needed for mixed-symbol observability validation in `start_monitor.ps1` and `README.md`
+- [x] T042 Run the observability validation bundle from `specs/010-monitor-runtime-observability/quickstart.md` and record outcomes in `specs/010-monitor-runtime-observability/tasks.md`
 
 ---
 

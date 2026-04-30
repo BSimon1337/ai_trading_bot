@@ -1,6 +1,7 @@
 param(
     [ValidateSet("live", "paper")]
     [string]$Mode = "live",
+    # Include at least one stock and one crypto symbol when validating mixed-symbol monitor behavior.
     [string]$Symbols = "SPY,BTC/USD,ETH/USD,SOL/USD,DOGE/USD",
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8080,

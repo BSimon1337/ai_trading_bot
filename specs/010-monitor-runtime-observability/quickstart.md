@@ -56,6 +56,7 @@ http://127.0.0.1:8080
 4. Confirm another symbol does not show the same held value or cash state unless its own evidence supports that value.
 5. Confirm the dashboard remains correct after the next snapshot lands and provisional labeling clears naturally.
 6. Confirm symbols that looked correct before startup do not regress into duplicated held-value or cash displays after the managed runtimes become active.
+7. Confirm `Account Cash` remains an account-overview concept while each symbol's `Held Value` stays symbol-scoped.
 
 ## Validation Commands
 
@@ -74,6 +75,7 @@ cd C:\Users\Beau\ai_trading_bot
 - Recent runtime event summaries that explain what each bot just did
 - Symbol-scoped warning visibility for broker/runtime/evidence issues
 - Provisional portfolio labeling when fills are newer than snapshots
+- `Account Cash` wording that stays account-level without leaking account totals into another symbol's held-value field
 - No cross-symbol leakage of held quantity, held value, or cash state after bots are started
 - No regression where pre-start card values look correct but become duplicated or overwritten once the runtimes enter active state
 - Tray summary that remains consistent with dashboard runtime truth
