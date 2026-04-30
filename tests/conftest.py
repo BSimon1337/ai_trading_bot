@@ -39,6 +39,8 @@ def make_bot_config(**overrides) -> BotConfig:
         live_trading_enabled=False,
         live_run_confirmation="",
         live_confirmation_token="CONFIRM",
+        runtime_registry_path="logs/test/runtime_registry.json",
+        runtime_recent_sessions_limit=25,
     )
     defaults.update(overrides)
     return BotConfig(**defaults)

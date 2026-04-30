@@ -24,6 +24,8 @@ TRAY_STATE_META = {
     "live": ("AI Trading Bot Monitor (Live)", "Live evidence is updating.", "#27AE60"),
     "paper": ("AI Trading Bot Monitor (Paper)", "Paper evidence is updating.", "#2980B9"),
     "running": ("AI Trading Bot Monitor (Running)", "Monitor evidence is updating.", "#16A085"),
+    "stopped": ("AI Trading Bot Monitor (Stopped)", "Managed runtimes are stopped.", "#7F8C8D"),
+    "paused": ("AI Trading Bot Monitor (Paused)", "A managed runtime is paused.", "#F39C12"),
     "unavailable": ("AI Trading Bot Monitor", "Tray monitor is unavailable.", "#7F8C8D"),
 }
 
@@ -164,6 +166,16 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     historical_issue_count = int(historical_context.get("historical_issue_count", 0) or 0)
     critical_count = sum(1 for issue in issues if issue.get("severity") == "critical")
     warning_count = sum(1 for issue in issues if issue.get("severity") == "warning")
+    running_runtime_count = sum(1 for instance in instances if instance.get("runtime_state") == "running")
+    failed_runtime_count = sum(1 for instance in instances if instance.get("runtime_state") == "failed")
+    latest_runtime_refresh = max(
+        (
+            str(instance.get("runtime_last_seen_utc", "") or "")
+            for instance in instances
+            if instance.get("runtime_last_seen_utc")
+        ),
+        default="",
+    )
     if critical_count:
         issue_summary = f"Critical: {critical_count}. Warnings: {warning_count}."
     elif warning_count:
@@ -171,7 +183,12 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     else:
         issue_summary = f"Issues: {issue_count}."
     historical_summary = f" Historical: {historical_issue_count}." if historical_issue_count else ""
-    tooltip = f"{summary} Instances: {instance_count}. {issue_summary} Notes: {note_count}.{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
+    runtime_summary = f" Running runtimes: {running_runtime_count}. Failed runtimes: {failed_runtime_count}."
+    refresh_summary = f" Runtime refresh: {latest_runtime_refresh}." if latest_runtime_refresh else ""
+    tooltip = (
+        f"{summary} Instances: {instance_count}. {issue_summary} Notes: {note_count}."
+        f"{runtime_summary}{refresh_summary}{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
+    )
     return TrayState(
         label=label,
         state=aggregate_state,

@@ -6,7 +6,13 @@ from pathlib import Path
 import pandas as pd
 
 from tests.conftest import make_bot_config
-from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, recent_decision, write_decisions, write_malformed_csv
+from tests.fixtures.monitor.build_fixtures import (
+    create_monitor_fixture,
+    recent_decision,
+    write_decisions,
+    write_malformed_csv,
+    write_runtime_registry,
+)
 from tradingbot.app.monitor import (
     DEFAULT_HEADLINE_PREVIEW_LIMIT,
     VALUE_SOURCE_SNAPSHOT_DELTA,
@@ -214,6 +220,194 @@ def test_dashboard_status_extracts_current_per_symbol_sentiment_snapshot(tmp_pat
     assert item["sentiment_last_updated_utc"]
 
 
+def test_load_monitor_configuration_merges_runtime_registry_state(tmp_path, monkeypatch):
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-28T02:00:00+00:00",
+            "managed_runtimes": [
+                {
+                    "symbol": "BTC/USD",
+                    "instance_label": "BTC/USD",
+                    "mode": "live",
+                    "lifecycle_state": "running",
+                    "session_id": "session-btc",
+                    "pid": 2468,
+                    "started_at_utc": "2026-04-28T01:55:00+00:00",
+                    "last_seen_utc": "2026-04-28T02:00:00+00:00",
+                    "decision_log_path": "logs/paper_validation_btcusd/decisions.csv",
+                    "fill_log_path": "logs/paper_validation_btcusd/fills.csv",
+                    "snapshot_log_path": "logs/paper_validation_btcusd/daily_snapshot.csv",
+                }
+            ],
+            "recent_sessions": [],
+            "lifecycle_events": [],
+        },
+    )
+    monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
+
+    config = load_monitor_configuration(symbols=("BTC/USD",))
+    instance = config.instances[0]
+
+    assert config.runtime_registry_path == runtime_registry_path
+    assert instance.runtime_state == "running"
+    assert instance.runtime_session_id == "session-btc"
+    assert instance.runtime_pid == 2468
+    assert instance.runtime_started_at_utc == "2026-04-28T01:55:00+00:00"
+
+
+def test_summarize_instance_preserves_runtime_registry_metadata(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_status_message="running",
+        runtime_session_id="session-btc",
+        runtime_pid=2468,
+        runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+        runtime_last_seen_utc="2026-04-28T02:00:00+00:00",
+        last_lifecycle_event="started",
+        is_fresh_runtime_session=True,
+    )
+
+    summary = summarize_instance(instance)
+
+    assert summary.runtime_state == "running"
+    assert summary.runtime_session_id == "session-btc"
+    assert summary.runtime_pid == 2468
+    assert summary.runtime_started_at_utc == "2026-04-28T01:55:00+00:00"
+    assert summary.runtime_last_seen_utc == "2026-04-28T02:00:00+00:00"
+    assert summary.last_lifecycle_event == "started"
+    assert summary.is_fresh_runtime_session is True
+
+
+def test_dashboard_status_includes_runtime_registry_fields_on_instance_payload(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_status_message="Runtime is running.",
+                runtime_session_id="session-btc",
+                runtime_pid=2468,
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:00:00+00:00",
+                last_lifecycle_event="running",
+                is_fresh_runtime_session=True,
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "running"
+    assert item["runtime_status_message"] == "Runtime is running."
+    assert item["runtime_session_id"] == "session-btc"
+    assert item["runtime_pid"] == 2468
+    assert item["runtime_started_at_utc"] == "2026-04-28T01:55:00+00:00"
+    assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
+    assert item["last_lifecycle_event"] == "running"
+    assert item["is_fresh_runtime_session"] is True
+
+
+def test_dashboard_status_keeps_stop_and_failure_runtime_messages_visible(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="stopped",
+                runtime_status_message="Runtime stopped by operator.",
+                runtime_session_id="session-btc",
+                runtime_pid=None,
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:10:00+00:00",
+                last_lifecycle_event="stopped",
+                is_fresh_runtime_session=False,
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "stopped"
+    assert item["runtime_status_message"] == "Runtime stopped by operator."
+    assert item["last_lifecycle_event"] == "stopped"
+
+
+def test_dashboard_status_distinguishes_stopped_runtime_from_stale_logs(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "stale", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="stopped",
+                runtime_status_message="Runtime stopped by operator.",
+                runtime_session_id="session-btc",
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:10:00+00:00",
+                last_lifecycle_event="stopped",
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["status"]["state"] == "stopped"
+    assert item["status"]["message"] == "Runtime stopped by operator."
+    assert payload["aggregate_state"] == "stopped"
+
+
+def test_dashboard_status_prefers_fresh_runtime_session_over_older_failed_logs(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "failed", symbol="BTC/USD")
+    runtime_started_at = (datetime.now(timezone.utc) + pd.Timedelta(minutes=1)).isoformat()
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_status_message="Runtime is running.",
+                runtime_session_id="session-btc-new",
+                runtime_pid=4567,
+                runtime_started_at_utc=runtime_started_at,
+                runtime_last_seen_utc=runtime_started_at,
+                last_lifecycle_event="restarted",
+                is_fresh_runtime_session=True,
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["status"]["state"] == "running"
+    assert item["runtime_status_message"] == "Runtime is running."
+    assert item["last_lifecycle_event"] == "restarted"
+
+
 def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_path):
     fallback_paths = create_monitor_fixture(tmp_path / "fallback", "healthy", symbol="BTC/USD")
     real_paths = create_monitor_fixture(tmp_path / "real", "healthy", symbol="ETH/USD")
@@ -276,6 +470,67 @@ def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_p
     assert fallback_item["sentiment_is_fallback"] is True
     assert real_item["sentiment_availability_state"] == "news_scored"
     assert real_item["sentiment_is_fallback"] is False
+
+
+def test_dashboard_status_uses_last_valid_sentiment_during_guardrail_lockout(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    write_decisions(
+        paths["decisions"],
+        [
+            _sentiment_row(
+                symbol="ETH/USD",
+                timestamp="2026-04-26T15:00:00+00:00",
+                action="buy",
+                action_source="model",
+                sentiment_label="positive",
+                sentiment_probability="0.88",
+                sentiment_source="external",
+                sentiment_availability_state="news_scored",
+                sentiment_is_fallback="false",
+                reason="submitted",
+                result="submitted",
+            ),
+            recent_decision(
+                symbol="ETH/USD",
+                timestamp="2026-04-26T15:15:00+00:00",
+                mode="live",
+                asset_class="crypto",
+                action="hold",
+                action_source="guardrail",
+                sentiment_source="",
+                sentiment_probability="",
+                sentiment_label="",
+                sentiment_availability_state="",
+                sentiment_is_fallback="",
+                sentiment_observed_at="",
+                headline_count="",
+                headline_preview="",
+                sentiment_window_start="",
+                sentiment_window_end="",
+                quantity="0",
+                portfolio_value="99.24",
+                cash="99.24",
+                reason="max_consecutive_losses_lockout_until_next_day_3",
+                result="skipped",
+            ),
+        ],
+    )
+    instance = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["latest_reason"] == "max_consecutive_losses_lockout_until_next_day_3"
+    assert item["sentiment_label"] == "positive"
+    assert item["sentiment_probability"] == 0.88
+    assert item["sentiment_availability_state"] == "news_scored"
 
 
 def test_dashboard_status_exposes_bounded_headline_preview_per_instance(tmp_path):

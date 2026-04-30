@@ -105,6 +105,7 @@ class SentimentMLStrategy(Strategy):
         self._cooldown_until = None
         self._pending_trade_equity_anchor = None
         self._consecutive_losses = 0
+        self._loss_lockout_date: date | None = None
         self._last_features_timestamp = None
         self._deferred_crypto_order_qty = 0.0
         self._deferred_crypto_order_side: str | None = None
@@ -183,6 +184,42 @@ class SentimentMLStrategy(Strategy):
             writer = csv.DictWriter(fp, fieldnames=headers)
             writer.writerow({header: row.get(header, "") for header in headers})
 
+    def _normalize_logged_quantity(self, quantity: float) -> float | int:
+        if self.is_crypto:
+            return round(float(quantity), 8)
+        return int(quantity)
+
+    def _append_fill_record(
+        self,
+        *,
+        side: str,
+        quantity: float,
+        order_id: str = "",
+        notional_usd: float | None = None,
+        result: str = "filled",
+    ) -> None:
+        if self.fill_log_path is None:
+            return
+
+        normalized_quantity = self._normalize_logged_quantity(quantity)
+        self._append_csv(
+            self.fill_log_path,
+            {
+                "timestamp": self.get_datetime().isoformat(),
+                "mode": self.mode,
+                "symbol": self.symbol,
+                "asset_class": self.asset_class,
+                "side": side,
+                "quantity": normalized_quantity,
+                "order_id": order_id,
+                "portfolio_value": round(self._get_portfolio_value(), 6),
+                "cash": round(float(self.get_cash()), 6),
+                "notional_usd": "" if notional_usd is None else round(abs(float(notional_usd)), 6),
+                "result": result,
+            },
+            FILL_HEADERS,
+        )
+
     def _current_position_qty(self) -> float:
         trade_asset = self._trade_asset()
         try:
@@ -217,6 +254,8 @@ class SentimentMLStrategy(Strategy):
             self._day_anchor_equity = self._get_portfolio_value()
             self._trades_today = 0
             self._cooldown_until = None
+            self._consecutive_losses = 0
+            self._loss_lockout_date = None
 
     def _log_snapshot_if_due(self) -> None:
         now = self.get_datetime()
@@ -547,23 +586,6 @@ class SentimentMLStrategy(Strategy):
             self._deferred_crypto_order_side = None
         self._trades_today += 1
         self._pending_trade_equity_anchor = portfolio_value
-        self._append_csv(
-            self.fill_log_path,
-            {
-                "timestamp": self.get_datetime().isoformat(),
-                "mode": self.mode,
-                "symbol": self.symbol,
-                "asset_class": self.asset_class,
-                "side": order_side,
-                "quantity": order_quantity,
-                "order_id": order_id,
-                "portfolio_value": round(portfolio_value, 6),
-                "cash": round(float(self.get_cash()), 6),
-                "notional_usd": round(order_notional, 6),
-                "result": "submitted",
-            },
-            FILL_HEADERS,
-        )
         return {"executed": True, "reason": "submitted", "quantity": float(delta_qty), "order_id": order_id}
 
     def _set_cooldown_if_recent_trade_lost(self) -> None:
@@ -589,9 +611,7 @@ class SentimentMLStrategy(Strategy):
         reason: str,
         sentiment_evidence: dict[str, object] | None = None,
     ) -> None:
-        normalized_quantity: float | int = round(float(quantity), 8)
-        if not self.is_crypto:
-            normalized_quantity = int(quantity)
+        normalized_quantity = self._normalize_logged_quantity(quantity)
         row = {
             "timestamp": self.get_datetime().isoformat(),
             "mode": self.mode,
@@ -616,11 +636,43 @@ class SentimentMLStrategy(Strategy):
             "portfolio_value": round(self._get_portfolio_value(), 6),
             "cash": round(float(self.get_cash()), 6),
             "reason": reason,
-            "result": "submitted" if quantity > 0 and action in {"buy", "sell"} else "blocked" if action == "hold" and reason.endswith("blocked") else "skipped",
+            "result": "submitted"
+            if quantity > 0 and action in {"buy", "sell", "flat"}
+            else "blocked"
+            if action == "hold" and reason.endswith("blocked")
+            else "skipped",
         }
         if sentiment_evidence:
             row.update(sentiment_evidence)
         self._append_csv(self.decision_log_path, row, DECISION_HEADERS)
+
+    def _trigger_guardrail_flat(self, reason: str) -> None:
+        current_qty = max(0.0, self._current_position_qty())
+        self.sell_all()
+        self._log_decision("flat", "guardrail", None, None, None, None, current_qty, reason)
+
+    def _loss_lockout_active(self) -> bool:
+        lockout_date = getattr(self, "_loss_lockout_date", None)
+        if lockout_date is None:
+            return False
+        return self.get_datetime().date() == lockout_date
+
+    def on_filled_order(self, position, order, price, quantity, multiplier):
+        side = str(getattr(order, "side", "") or "").lower()
+        if side not in {"buy", "sell"}:
+            return
+
+        filled_quantity = abs(float(quantity))
+        fill_multiplier = 1.0 if multiplier in (None, "") else float(multiplier)
+        notional_usd = filled_quantity * abs(float(price)) * fill_multiplier
+        order_id = getattr(order, "identifier", "") or ""
+        self._append_fill_record(
+            side=side,
+            quantity=filled_quantity,
+            order_id=order_id,
+            notional_usd=notional_usd,
+            result="filled",
+        )
 
     def on_trading_iteration(self):
         self._reset_day_anchor_if_needed()
@@ -628,8 +680,7 @@ class SentimentMLStrategy(Strategy):
         self._set_cooldown_if_recent_trade_lost()
 
         if self.kill_switch:
-            self.sell_all()
-            self._log_decision("flat", "guardrail", None, None, None, None, 0, "kill_switch_enabled")
+            self._trigger_guardrail_flat("kill_switch_enabled")
             return
 
         anchor = self._day_anchor_equity
@@ -637,22 +688,25 @@ class SentimentMLStrategy(Strategy):
             day_start_equity=anchor,
             current_equity=self._get_portfolio_value(),
         ):
-            self.sell_all()
-            self._log_decision("flat", "guardrail", None, None, None, None, 0, "daily_loss_limit_breached")
+            self._trigger_guardrail_flat("daily_loss_limit_breached")
             return
 
-        if self._consecutive_losses >= int(self.max_consecutive_losses):
-            self.sell_all()
+        if self._loss_lockout_active():
             self._log_decision(
-                "flat",
+                "hold",
                 "guardrail",
                 None,
                 None,
                 None,
                 None,
                 0,
-                f"max_consecutive_losses_reached_{self._consecutive_losses}",
+                f"max_consecutive_losses_lockout_until_next_day_{self._consecutive_losses}",
             )
+            return
+
+        if self._consecutive_losses >= int(self.max_consecutive_losses):
+            self._loss_lockout_date = self.get_datetime().date()
+            self._trigger_guardrail_flat(f"max_consecutive_losses_reached_{self._consecutive_losses}")
             return
 
         if self._cooldown_until is not None and self.get_datetime() < self._cooldown_until:

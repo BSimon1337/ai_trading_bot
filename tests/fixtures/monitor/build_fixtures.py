@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -27,6 +28,12 @@ def write_fills(path: Path, rows: list[dict[str, object]]) -> Path:
 
 def write_snapshots(path: Path, rows: list[dict[str, object]]) -> Path:
     return _write_rows(path, SNAPSHOT_HEADERS, rows)
+
+
+def write_runtime_registry(path: Path, payload: dict[str, object]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
 
 
 def recent_decision(symbol: str = "SPY", **overrides) -> dict[str, object]:

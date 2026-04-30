@@ -11,6 +11,14 @@ from typing import Any
 import pandas as pd
 from flask import Flask, jsonify, render_template
 
+from tradingbot.app.runtime_manager import (
+    LifecycleEvent,
+    ManagedRuntime,
+    empty_runtime_registry,
+    lifecycle_event_index,
+    load_runtime_registry,
+    runtime_state_index,
+)
 from tradingbot.config.settings import BotConfig, infer_asset_class
 from tradingbot.sentiment.scoring import sentiment_availability_state
 
@@ -160,6 +168,14 @@ class DashboardInstance:
     notes: tuple[NoteSummary, ...] = ()
     evidence_scope: str = "active"
     historical_issues: tuple[IssueSummary, ...] = ()
+    runtime_state: str = ""
+    runtime_status_message: str = ""
+    runtime_session_id: str = ""
+    runtime_pid: int | None = None
+    runtime_started_at_utc: str = ""
+    runtime_last_seen_utc: str = ""
+    last_lifecycle_event: str = ""
+    is_fresh_runtime_session: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,6 +188,7 @@ class MonitorConfiguration:
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS
     tray_enabled: bool = True
     read_only: bool = True
+    runtime_registry_path: Path = Path("logs/runtime/runtime_registry.json")
     instances: tuple[DashboardInstance, ...] = ()
 
 
@@ -280,6 +297,8 @@ def discover_monitor_instances(
     config: BotConfig | None = None,
     symbols: tuple[str, ...] | None = None,
     base_dir: Path = Path("logs"),
+    runtime_index: dict[str, ManagedRuntime] | None = None,
+    lifecycle_index: dict[str, LifecycleEvent] | None = None,
 ) -> tuple[DashboardInstance, ...]:
     if symbols is None and config is not None:
         symbols = config.symbols
@@ -295,6 +314,8 @@ def discover_monitor_instances(
             snapshot_path = Path(config.daily_snapshot_path)
         else:
             decision_path, fill_path, snapshot_path = _paths_for_symbol(symbol, base_dir=base_dir)
+        runtime = (runtime_index or {}).get(symbol)
+        lifecycle_event = (lifecycle_index or {}).get(symbol)
         instances.append(
             DashboardInstance(
                 label=symbol,
@@ -303,9 +324,29 @@ def discover_monitor_instances(
                 decision_log_path=decision_path,
                 fill_log_path=fill_path,
                 snapshot_log_path=snapshot_path,
+                runtime_state="" if runtime is None else runtime.lifecycle_state,
+                runtime_status_message=""
+                if runtime is None
+                else runtime.failure_reason or (lifecycle_event.message if lifecycle_event is not None else runtime.lifecycle_state.replace("_", " ")),
+                runtime_session_id="" if runtime is None else runtime.session_id,
+                runtime_pid=None if runtime is None else runtime.pid,
+                runtime_started_at_utc="" if runtime is None else runtime.started_at_utc,
+                runtime_last_seen_utc="" if runtime is None else runtime.last_seen_utc,
+                last_lifecycle_event="" if lifecycle_event is None else lifecycle_event.event_type,
+                is_fresh_runtime_session=bool(runtime and runtime.lifecycle_state in {"starting", "running", "restarting"}),
             )
         )
     return tuple(instances)
+
+
+def load_runtime_registry_views(
+    runtime_registry_path: Path,
+) -> tuple[dict[str, ManagedRuntime], dict[str, LifecycleEvent]]:
+    try:
+        registry = load_runtime_registry(runtime_registry_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        registry = empty_runtime_registry()
+    return runtime_state_index(registry), lifecycle_event_index(registry)
 
 
 def load_monitor_configuration(
@@ -320,11 +361,18 @@ def load_monitor_configuration(
     historical_issue_limit = _safe_int(os.getenv("MONITOR_HISTORICAL_ISSUE_LIMIT"), DEFAULT_HISTORY_ISSUE_LIMIT)
     dashboard_host = os.getenv("MONITOR_HOST", "127.0.0.1").strip() or "127.0.0.1"
     tray_enabled = os.getenv("MONITOR_TRAY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    runtime_registry_path = Path(
+        os.getenv(
+            "RUNTIME_REGISTRY_PATH",
+            config.runtime_registry_path if config is not None else "logs/runtime/runtime_registry.json",
+        )
+    )
     archive_markers = tuple(
         marker.strip().lower()
         for marker in os.getenv("MONITOR_ARCHIVE_MARKERS", ",".join(DEFAULT_ARCHIVE_MARKERS)).split(",")
         if marker.strip()
     ) or DEFAULT_ARCHIVE_MARKERS
+    runtime_index, lifecycle_index = load_runtime_registry_views(runtime_registry_path)
     return MonitorConfiguration(
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -334,7 +382,14 @@ def load_monitor_configuration(
         archive_markers=archive_markers,
         tray_enabled=tray_enabled,
         read_only=True,
-        instances=discover_monitor_instances(config=config, symbols=symbols, base_dir=base_dir),
+        runtime_registry_path=runtime_registry_path,
+        instances=discover_monitor_instances(
+            config=config,
+            symbols=symbols,
+            base_dir=base_dir,
+            runtime_index=runtime_index,
+            lifecycle_index=lifecycle_index,
+        ),
     )
 
 
@@ -462,6 +517,35 @@ def _sentiment_snapshot(summary: DecisionSummary | None) -> SentimentSnapshot:
         decision_mode=summary.mode,
         message=_sentiment_state_message(availability_state),
     )
+
+
+def _has_sentiment_evidence(summary: DecisionSummary | None) -> bool:
+    if summary is None:
+        return False
+    evidence_values = (
+        summary.sentiment_source,
+        summary.sentiment_probability,
+        summary.sentiment_label,
+        summary.sentiment_availability_state,
+        summary.sentiment_is_fallback,
+        summary.sentiment_observed_at,
+        summary.headline_count,
+        summary.headline_preview,
+        summary.sentiment_window_start,
+        summary.sentiment_window_end,
+    )
+    return any(str(value or "").strip() for value in evidence_values)
+
+
+def _latest_sentiment_summary(decisions: pd.DataFrame) -> DecisionSummary | None:
+    if decisions.empty:
+        return None
+
+    for row in reversed(decisions.to_dict(orient="records")):
+        summary = _row_to_summary(row, DecisionSummary)
+        if _has_sentiment_evidence(summary):
+            return summary
+    return None
 
 
 def _headline_evidence_preview(
@@ -728,6 +812,18 @@ def _parse_instance_timestamp(value: str | None) -> pd.Timestamp | None:
     return timestamp
 
 
+def _filter_runtime_session_evidence(
+    dataframe: pd.DataFrame,
+    runtime_started_at_utc: str,
+) -> pd.DataFrame:
+    if dataframe.empty or "timestamp" not in dataframe.columns or not runtime_started_at_utc:
+        return dataframe
+    runtime_started_at = _parse_instance_timestamp(runtime_started_at_utc)
+    if runtime_started_at is None:
+        return dataframe
+    return dataframe[dataframe["timestamp"] >= runtime_started_at]
+
+
 def _select_authoritative_account_instance(
     instances: list[DashboardInstance],
     *,
@@ -786,15 +882,39 @@ def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
 
 
 def _classify_status(
+    instance: DashboardInstance,
     latest_decision: DecisionSummary | None,
     issues: list[IssueSummary],
     age_minutes: float | None,
     stale_after_minutes: int,
 ) -> RuntimeStatus:
+    runtime_state = instance.runtime_state
+    runtime_message = instance.runtime_status_message or "Runtime state updated by runtime manager."
+    if runtime_state == "failed":
+        return RuntimeStatus("failed", "critical", runtime_message, age_minutes)
+    if runtime_state == "blocked":
+        return RuntimeStatus("blocked", "critical", runtime_message, age_minutes)
+    if runtime_state == "paused":
+        return RuntimeStatus("paused", "warning", runtime_message, age_minutes)
+    if runtime_state == "stopped":
+        return RuntimeStatus("stopped", "info", runtime_message, age_minutes)
+    if runtime_state == "stopping":
+        return RuntimeStatus("stopped", "warning", runtime_message, age_minutes)
+    if runtime_state in {"starting", "restarting"}:
+        return RuntimeStatus("running", "info", runtime_message, age_minutes)
+
     if latest_decision is None:
+        if runtime_state == "running":
+            return RuntimeStatus("running", "info", runtime_message, age_minutes)
         return RuntimeStatus("no_data", "warning", "No runtime evidence found.", age_minutes)
     live_like = latest_decision.mode in {"active-live", "live"}
     paper_like = latest_decision.mode == "paper"
+    if runtime_state == "running":
+        if live_like:
+            return RuntimeStatus("live", "ok", runtime_message or "Managed live runtime is running.", age_minutes)
+        if paper_like:
+            return RuntimeStatus("paper", "info", runtime_message or "Managed paper runtime is running.", age_minutes)
+        return RuntimeStatus("running", "ok", runtime_message, age_minutes)
     if latest_decision.mode == "blocked-live" or latest_decision.result == "blocked":
         return RuntimeStatus("blocked", "critical", latest_decision.reason or "Live run was blocked.", age_minutes)
     if latest_decision.result == "failed":
@@ -948,6 +1068,10 @@ def summarize_instance(
     decisions = normalize_timestamps(decision_result.dataframe)
     fills = normalize_timestamps(fill_result.dataframe)
     snapshot = _normalize_snapshot_frame(snapshot_result.dataframe)
+    if instance.is_fresh_runtime_session and instance.runtime_started_at_utc:
+        decisions = _filter_runtime_session_evidence(decisions, instance.runtime_started_at_utc)
+        fills = _filter_runtime_session_evidence(fills, instance.runtime_started_at_utc)
+        snapshot = _filter_runtime_session_evidence(snapshot, instance.runtime_started_at_utc)
     active_decisions = _filter_active_evidence(decisions, active_minutes=stale_after_minutes)
     active_fills = _filter_active_evidence(fills, active_minutes=stale_after_minutes)
     active_snapshot = _filter_active_evidence(snapshot, active_minutes=stale_after_minutes)
@@ -997,7 +1121,7 @@ def summarize_instance(
         historical_issue_limit=historical_issue_limit,
     )
     notes = _notes_from_evidence(active_decisions, active_fills, active_snapshot)
-    status = _classify_status(latest_decision, issues, age, stale_after_minutes)
+    status = _classify_status(instance, latest_decision, issues, age, stale_after_minutes)
     return DashboardInstance(
         label=instance.label,
         symbols=instance.symbols,
@@ -1014,6 +1138,14 @@ def summarize_instance(
         notes=tuple(notes),
         evidence_scope=evidence_scope,
         historical_issues=tuple(historical_issues),
+        runtime_state=instance.runtime_state,
+        runtime_status_message=instance.runtime_status_message,
+        runtime_session_id=instance.runtime_session_id,
+        runtime_pid=instance.runtime_pid,
+        runtime_started_at_utc=instance.runtime_started_at_utc,
+        runtime_last_seen_utc=instance.runtime_last_seen_utc,
+        last_lifecycle_event=instance.last_lifecycle_event,
+        is_fresh_runtime_session=instance.is_fresh_runtime_session,
     )
 
 
@@ -1050,8 +1182,9 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
     recent_fills = _recent_rows(fills)
     latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
     held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
-    current_sentiment = _sentiment_snapshot(latest_decision)
-    headline_preview = _headline_evidence_preview(latest_decision)
+    sentiment_summary = _latest_sentiment_summary(decisions) or latest_decision
+    current_sentiment = _sentiment_snapshot(sentiment_summary)
+    headline_preview = _headline_evidence_preview(sentiment_summary)
     sentiment_trend = _sentiment_trend(decisions)
     broker_rejection_count = 0
     for frame in (decisions, fills):
@@ -1075,6 +1208,14 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "latest_asset_class": latest_decision.asset_class or (instance.asset_classes[0] if instance.asset_classes else "unknown"),
         "latest_source": latest_decision.action_source or "n/a",
         "latest_update_utc": instance.last_updated_at,
+        "runtime_state": instance.runtime_state,
+        "runtime_status_message": instance.runtime_status_message,
+        "runtime_session_id": instance.runtime_session_id,
+        "runtime_pid": instance.runtime_pid,
+        "runtime_started_at_utc": instance.runtime_started_at_utc,
+        "runtime_last_seen_utc": instance.runtime_last_seen_utc,
+        "last_lifecycle_event": instance.last_lifecycle_event,
+        "is_fresh_runtime_session": instance.is_fresh_runtime_session,
         "last_decision_utc": latest_decision.timestamp or "",
         "last_fill_utc": latest_fill.timestamp or "",
         "heartbeat_age_minutes": instance.status.age_minutes,
@@ -1132,13 +1273,17 @@ def _aggregate_state(instances: list[DashboardInstance]) -> str:
     states = {instance.status.state for instance in considered}
     if not considered:
         return "no_data"
-    for state in ("failed", "blocked", "stale", "no_data"):
+    for state in ("failed", "blocked", "paused", "stale", "no_data"):
         if state in states:
             return state
     if "live" in states:
         return "live"
     if "paper" in states:
         return "paper"
+    if "running" in states:
+        return "running"
+    if "stopped" in states:
+        return "stopped"
     return "running"
 
 

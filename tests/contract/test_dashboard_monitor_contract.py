@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from tests.fixtures.monitor.build_fixtures import create_monitor_fixture
-from tradingbot.app.monitor import DashboardInstance, create_app
+from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, write_runtime_registry
+from tradingbot.app.monitor import DashboardInstance, create_app, load_monitor_configuration
 
 
 def _instance(root, label: str = "BTC/USD") -> DashboardInstance:
@@ -58,6 +58,14 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "latest_mode",
         "latest_asset_class",
         "latest_update_utc",
+        "runtime_state",
+        "runtime_status_message",
+        "runtime_session_id",
+        "runtime_pid",
+        "runtime_started_at_utc",
+        "runtime_last_seen_utc",
+        "last_lifecycle_event",
+        "is_fresh_runtime_session",
         "last_decision_utc",
         "last_fill_utc",
         "broker_rejection_count",
@@ -92,6 +100,128 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert b"Sentiment State" in page_response.data
     assert b"Recent Headlines" in page_response.data
     assert b"Sentiment Trend" in page_response.data
+    assert b"Runtime State" in page_response.data
+
+
+def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path, monkeypatch):
+    fixture_root = tmp_path / "paper_validation_btcusd"
+    create_monitor_fixture(fixture_root, "healthy", symbol="BTC/USD")
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-28T02:00:00+00:00",
+            "managed_runtimes": [
+                {
+                    "symbol": "BTC/USD",
+                    "instance_label": "BTC/USD",
+                    "mode": "live",
+                    "lifecycle_state": "running",
+                    "session_id": "session-btc",
+                    "pid": 2468,
+                    "started_at_utc": "2026-04-28T01:55:00+00:00",
+                    "last_seen_utc": "2026-04-28T02:00:00+00:00",
+                    "decision_log_path": str(fixture_root / "decisions.csv"),
+                    "fill_log_path": str(fixture_root / "fills.csv"),
+                    "snapshot_log_path": str(fixture_root / "daily_snapshot.csv"),
+                }
+            ],
+            "recent_sessions": [],
+            "lifecycle_events": [
+                {
+                    "timestamp_utc": "2026-04-28T02:00:00+00:00",
+                    "symbol": "BTC/USD",
+                    "session_id": "session-btc",
+                    "event_type": "running",
+                    "message": "Runtime is running.",
+                    "source": "runtime_manager",
+                }
+            ],
+        },
+    )
+    monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
+    config = load_monitor_configuration(symbols=("BTC/USD",), base_dir=tmp_path)
+    app = create_app(instances=config.instances)
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "running"
+    assert item["runtime_status_message"] == "Runtime is running."
+    assert item["runtime_session_id"] == "session-btc"
+    assert item["runtime_pid"] == 2468
+    assert item["runtime_started_at_utc"] == "2026-04-28T01:55:00+00:00"
+    assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
+    assert item["last_lifecycle_event"] == "running"
+    assert item["is_fresh_runtime_session"] is True
+
+
+def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "stale", symbol="BTC/USD")
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="stopped",
+                runtime_status_message="Runtime stopped by operator.",
+                runtime_session_id="session-btc",
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:10:00+00:00",
+                last_lifecycle_event="stopped",
+                is_fresh_runtime_session=False,
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert payload["aggregate_state"] == "stopped"
+    assert payload["instances"][0]["status"]["state"] == "stopped"
+    assert "Runtime stopped by operator." in page_text
+    assert "lifecycle stopped" in page_text
+
+
+def test_dashboard_contract_prefers_fresh_runtime_session_over_old_failed_logs(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "failed", symbol="BTC/USD")
+    runtime_started_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_status_message="Runtime is running.",
+                runtime_session_id="session-btc-new",
+                runtime_pid=4567,
+                runtime_started_at_utc=runtime_started_at,
+                runtime_last_seen_utc=runtime_started_at,
+                last_lifecycle_event="restarted",
+                is_fresh_runtime_session=True,
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert payload["aggregate_state"] == "running"
+    assert payload["instances"][0]["status"]["state"] == "running"
+    assert payload["instances"][0]["is_fresh_runtime_session"] is True
+    assert "fresh session" in page_text
 
 
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):
@@ -235,13 +365,16 @@ def test_dashboard_contract_exposes_active_and_historical_context_separately(tmp
 
 
 def test_dashboard_contract_renders_stale_and_no_headline_sentiment_states(tmp_path):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    stale_observed_at = (now - timedelta(hours=5)).isoformat()
+    fresh_observed_at = now.isoformat()
     stale_paths = create_monitor_fixture(tmp_path / "stale_sentiment", "healthy", symbol="BTC/USD")
     fallback_paths = create_monitor_fixture(tmp_path / "no_headlines", "healthy", symbol="ETH/USD")
     stale_paths["decisions"].write_text(
         "\n".join(
             [
                 "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,sentiment_availability_state,sentiment_is_fallback,sentiment_observed_at,headline_count,headline_preview,sentiment_window_start,sentiment_window_end,quantity,portfolio_value,cash,reason,result",
-                "2026-04-26T15:00:00+00:00,live,BTC/USD,crypto,hold,model,0.7,external,0.8,positive,news_scored,false,2026-04-26T10:00:00+00:00,3,\"[\"\"H1\"\",\"\"H2\"\",\"\"H3\"\"]\",2026-04-23,2026-04-26,0,100,90,hold,skipped",
+                f"{now.isoformat()},live,BTC/USD,crypto,hold,model,0.7,external,0.8,positive,news_scored,false,{stale_observed_at},3,\"[\"\"H1\"\",\"\"H2\"\",\"\"H3\"\"]\",2026-04-23,2026-04-26,0,100,90,hold,skipped",
             ]
         ),
         encoding="utf-8",
@@ -250,7 +383,7 @@ def test_dashboard_contract_renders_stale_and_no_headline_sentiment_states(tmp_p
         "\n".join(
             [
                 "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,sentiment_availability_state,sentiment_is_fallback,sentiment_observed_at,headline_count,headline_preview,sentiment_window_start,sentiment_window_end,quantity,portfolio_value,cash,reason,result",
-                "2026-04-26T15:00:00+00:00,live,ETH/USD,crypto,hold,model,0.6,external,0.0,neutral,,false,2026-04-26T15:00:00+00:00,0,[],2026-04-23,2026-04-26,0,100,90,hold,skipped",
+                f"{now.isoformat()},live,ETH/USD,crypto,hold,model,0.6,external,0.0,neutral,,false,{fresh_observed_at},0,[],2026-04-23,2026-04-26,0,100,90,hold,skipped",
             ]
         ),
         encoding="utf-8",

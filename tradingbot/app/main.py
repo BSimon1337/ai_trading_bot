@@ -17,7 +17,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sentiment trading bot runner")
     parser.add_argument(
         "--mode",
-        choices=["backtest", "live", "preflight"],
+        choices=["backtest", "live", "preflight", "runtime-start", "runtime-stop", "runtime-restart"],
         default="backtest",
         help="Run a historical backtest or start the live trading loop.",
     )
@@ -37,6 +37,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=10,
         help="Number of days for --quick-backtest (default: 10).",
+    )
+    parser.add_argument(
+        "--managed-symbol",
+        action="append",
+        default=[],
+        help="Symbol to start through the runtime manager. Can be supplied multiple times.",
     )
     return parser
 
@@ -65,6 +71,62 @@ def _run_live_loop(config: BotConfig, runtime_state=None) -> None:
     run_trading_loop(config, runtime_state)
 
 
+def _run_runtime_manager_start(
+    config: BotConfig,
+    *,
+    symbols: tuple[str, ...],
+) -> int:
+    from tradingbot.app.runtime_manager import start_managed_runtimes
+
+    results = start_managed_runtimes(config, symbols, mode="live")
+    for result in results:
+        LOGGER.info(
+            "Managed runtime start for %s -> %s (session=%s pid=%s)",
+            result.symbol,
+            result.runtime_state,
+            result.session_id,
+            result.pid,
+        )
+    return 0 if all(result.runtime_state == "running" for result in results) else 1
+
+
+def _run_runtime_manager_stop(
+    config: BotConfig,
+    *,
+    symbols: tuple[str, ...],
+) -> int:
+    from tradingbot.app.runtime_manager import stop_managed_runtime
+
+    results = [stop_managed_runtime(config, symbol) for symbol in symbols]
+    for result in results:
+        LOGGER.info(
+            "Managed runtime stop for %s -> %s (session=%s)",
+            result.symbol,
+            result.runtime_state,
+            result.previous_session_id,
+        )
+    return 0 if all(result.runtime_state == "stopped" for result in results) else 1
+
+
+def _run_runtime_manager_restart(
+    config: BotConfig,
+    *,
+    symbols: tuple[str, ...],
+) -> int:
+    from tradingbot.app.runtime_manager import restart_managed_runtime
+
+    results = [restart_managed_runtime(config, symbol) for symbol in symbols]
+    for result in results:
+        LOGGER.info(
+            "Managed runtime restart for %s -> %s (old=%s new=%s)",
+            result.symbol,
+            result.runtime_state,
+            result.old_session_id,
+            result.new_session_id,
+        )
+    return 0 if all(result.runtime_state == "running" for result in results) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
     args = _build_parser().parse_args(argv)
@@ -91,6 +153,16 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             LOGGER.warning("Unable to write preflight log event: %s", exc)
         return report.exit_code
+
+    if args.mode == "runtime-start":
+        symbols = tuple(args.managed_symbol) if args.managed_symbol else config.symbols
+        return _run_runtime_manager_start(config, symbols=symbols)
+    if args.mode == "runtime-stop":
+        symbols = tuple(args.managed_symbol) if args.managed_symbol else config.symbols
+        return _run_runtime_manager_stop(config, symbols=symbols)
+    if args.mode == "runtime-restart":
+        symbols = tuple(args.managed_symbol) if args.managed_symbol else config.symbols
+        return _run_runtime_manager_restart(config, symbols=symbols)
 
     paths = LogPaths.from_config(config)
     ensure_runtime_logs(paths)
