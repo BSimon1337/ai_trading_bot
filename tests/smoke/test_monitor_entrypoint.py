@@ -172,9 +172,12 @@ def test_monitor_dashboard_control_routes_accept_post_actions(tmp_path):
     config = make_bot_config(symbols=("BTC/USD",))
     calls: list[tuple[str, str, str]] = []
 
+    confirmation_states: list[str] = []
+
     def fake_start_action(config, symbol, **kwargs):
         del config
         calls.append(("start", symbol, kwargs.get("mode", "")))
+        confirmation_states.append(kwargs.get("confirmation_state", ""))
         return {
             "action_id": "start-1",
             "symbol": symbol,
@@ -183,7 +186,7 @@ def test_monitor_dashboard_control_routes_accept_post_actions(tmp_path):
             "mode_context": "live",
             "requested_at_utc": "2026-04-28T02:00:00+00:00",
             "requested_from": "dashboard",
-            "confirmation_state": "not_required",
+            "confirmation_state": "confirmed",
             "outcome_state": "succeeded",
             "outcome_message": "Runtime is running.",
             "runtime_session_id": "session-btc",
@@ -242,7 +245,20 @@ def test_monitor_dashboard_control_routes_accept_post_actions(tmp_path):
         restart_action_runner=fake_restart_action,
     ).test_client()
 
-    assert client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"}).status_code == 200
+    blocked = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
+    assert blocked.status_code == 200
+    assert blocked.get_json()["outcome_state"] == "blocked"
+    assert client.post(
+        "/control/start",
+        data={"symbol": "BTC/USD", "mode_context": "live", "live_confirmation": "CONFIRM"},
+    ).status_code == 200
     assert client.post("/control/stop", data={"symbol": "BTC/USD"}).status_code == 200
-    assert client.post("/control/restart", data={"symbol": "BTC/USD", "mode_context": "live"}).status_code == 200
+    blocked_restart = client.post("/control/restart", data={"symbol": "BTC/USD", "mode_context": "live"})
+    assert blocked_restart.status_code == 200
+    assert blocked_restart.get_json()["outcome_state"] == "blocked"
+    assert client.post(
+        "/control/restart",
+        data={"symbol": "BTC/USD", "mode_context": "live", "live_confirmation": "CONFIRM"},
+    ).status_code == 200
     assert calls == [("start", "BTC/USD", "live"), ("stop", "BTC/USD", ""), ("restart", "BTC/USD", "live")]
+    assert confirmation_states == ["confirmed"]

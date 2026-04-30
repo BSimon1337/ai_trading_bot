@@ -75,18 +75,18 @@
 
 ### Tests for User Story 2
 
-- [ ] T021 [P] [US2] Add unit coverage for live-confirmation and blocked-action logic in `tests/unit/test_runtime_manager.py`
-- [ ] T022 [P] [US2] Add monitor data tests for live-vs-paper control messaging in `tests/unit/test_monitor_data.py`
-- [ ] T023 [P] [US2] Add contract checks for live confirmation requirements in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T024 [P] [US2] Add smoke tests for live control confirmation flow in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T021 [P] [US2] Add unit coverage for live-confirmation and blocked-action logic in `tests/unit/test_runtime_manager.py`
+- [x] T022 [P] [US2] Add monitor data tests for live-vs-paper control messaging in `tests/unit/test_monitor_data.py`
+- [x] T023 [P] [US2] Add contract checks for live confirmation requirements in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T024 [P] [US2] Add smoke tests for live control confirmation flow in `tests/smoke/test_monitor_entrypoint.py`
 
 ### Implementation for User Story 2
 
-- [ ] T025 [US2] Add monitor-side live confirmation state and validation flow in `tradingbot/app/monitor.py`
-- [ ] T026 [US2] Enforce dashboard-issued live safeguard checks through runtime-manager control calls in `tradingbot/app/runtime_manager.py`
-- [ ] T027 [US2] Render explicit live confirmation and blocked-action messaging in `templates/monitor.html`
-- [ ] T028 [US2] Surface live-vs-paper context consistently in tray and status summaries in `tradingbot/app/tray.py` and `tradingbot/app/monitor.py`
-- [ ] T029 [US2] Ensure blocked actions produce readable operator-visible outcomes in `tradingbot/app/monitor.py`
+- [x] T025 [US2] Add monitor-side live confirmation state and validation flow in `tradingbot/app/monitor.py`
+- [x] T026 [US2] Enforce dashboard-issued live safeguard checks through runtime-manager control calls in `tradingbot/app/runtime_manager.py`
+- [x] T027 [US2] Render explicit live confirmation and blocked-action messaging in `templates/monitor.html`
+- [x] T028 [US2] Surface live-vs-paper context consistently in tray and status summaries in `tradingbot/app/tray.py` and `tradingbot/app/monitor.py`
+- [x] T029 [US2] Ensure blocked actions produce readable operator-visible outcomes in `tradingbot/app/monitor.py`
 
 **Checkpoint**: User Story 2 should preserve the live-trading safety posture while making control decisions understandable in the UI.
 
@@ -100,18 +100,18 @@
 
 ### Tests for User Story 3
 
-- [ ] T030 [P] [US3] Add unit tests for recent control activity retention and ordering in `tests/unit/test_runtime_manager.py`
-- [ ] T031 [P] [US3] Add monitor data tests for mixed stock/crypto recent control history in `tests/unit/test_monitor_data.py`
-- [ ] T032 [P] [US3] Add contract checks for recent control activity payload fields in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T033 [P] [US3] Add tray contract/state coverage for reflected control outcomes in `tests/contract/test_tray_monitor_contract.py` and `tests/unit/test_tray_state.py`
+- [x] T030 [P] [US3] Add unit tests for recent control activity retention and ordering in `tests/unit/test_runtime_manager.py`
+- [x] T031 [P] [US3] Add monitor data tests for mixed stock/crypto recent control history in `tests/unit/test_monitor_data.py`
+- [x] T032 [P] [US3] Add contract checks for recent control activity payload fields in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T033 [P] [US3] Add tray contract/state coverage for reflected control outcomes in `tests/contract/test_tray_monitor_contract.py` and `tests/unit/test_tray_state.py`
 
 ### Implementation for User Story 3
 
-- [ ] T034 [US3] Persist bounded recent control activity in the runtime registry in `tradingbot/app/runtime_manager.py`
-- [ ] T035 [US3] Add recent control activity and control refresh fields to monitor payload shaping in `tradingbot/app/monitor.py`
-- [ ] T036 [US3] Render recent control activity and mixed asset context in `templates/monitor.html`
-- [ ] T037 [US3] Reflect latest control-related runtime outcomes in tray summaries in `tradingbot/app/tray.py`
-- [ ] T038 [US3] Keep stock and crypto control history readable under quiet-trading conditions in `tradingbot/app/monitor.py`
+- [x] T034 [US3] Persist bounded recent control activity in the runtime registry in `tradingbot/app/runtime_manager.py`
+- [x] T035 [US3] Add recent control activity and control refresh fields to monitor payload shaping in `tradingbot/app/monitor.py`
+- [x] T036 [US3] Render recent control activity and mixed asset context in `templates/monitor.html`
+- [x] T037 [US3] Reflect latest control-related runtime outcomes in tray summaries in `tradingbot/app/tray.py`
+- [x] T038 [US3] Keep stock and crypto control history readable under quiet-trading conditions in `tradingbot/app/monitor.py`
 
 **Checkpoint**: All user stories should now be independently functional, and the dashboard should feel like a coherent operator console.
 

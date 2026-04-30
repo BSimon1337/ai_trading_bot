@@ -37,6 +37,7 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "instances",
         "recent_control_actions",
         "latest_control_updated_at_utc",
+        "recent_control_activity_count",
         "issues",
         "notes",
         "recent_activity_columns",
@@ -77,6 +78,7 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "can_restart",
         "control_availability_message",
         "requires_live_confirmation",
+        "control_confirmation_hint",
         "last_decision_utc",
         "last_fill_utc",
         "broker_rejection_count",
@@ -115,6 +117,7 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert b"Start" in page_response.data
     assert b"Stop" in page_response.data
     assert b"Restart" in page_response.data
+    assert b"Recent Control Activity" in page_response.data
 
 
 def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path, monkeypatch):
@@ -194,14 +197,22 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert item["requires_live_confirmation"] is True
     assert payload["recent_control_actions"][0]["requested_action"] == "start"
     assert payload["recent_control_actions"][0]["symbol"] == "BTC/USD"
+    assert payload["recent_control_actions"][0]["timestamp_utc"] == "2026-04-28T02:00:00+00:00"
+    assert payload["recent_control_actions"][0]["requested_from"] == "dashboard"
+    assert payload["recent_control_actions"][0]["confirmation_state"] == "confirmed"
+    assert payload["recent_control_actions"][0]["runtime_session_id"] == "session-btc"
+    assert payload["recent_control_activity_count"] == 1
 
 
 def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
     config = make_bot_config(symbols=("BTC/USD",))
 
+    observed_confirmation_states: list[str] = []
+
     def fake_start_action(config, symbol, **kwargs):
-        del config, kwargs
+        del config
+        observed_confirmation_states.append(kwargs.get("confirmation_state", ""))
         return {
             "action_id": "start-1",
             "symbol": symbol,
@@ -210,7 +221,7 @@ def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_p
             "mode_context": "live",
             "requested_at_utc": "2026-04-28T02:00:00+00:00",
             "requested_from": "dashboard",
-            "confirmation_state": "not_required",
+            "confirmation_state": "confirmed",
             "outcome_state": "succeeded",
             "outcome_message": "Runtime is running.",
             "runtime_session_id": "session-btc",
@@ -234,14 +245,24 @@ def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_p
     )
     client = app.test_client()
 
-    response = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
+    blocked_response = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
+    blocked_payload = blocked_response.get_json()
+    response = client.post(
+        "/control/start",
+        data={"symbol": "BTC/USD", "mode_context": "live", "live_confirmation": "CONFIRM"},
+    )
     payload = response.get_json()
 
+    assert blocked_response.status_code == 200
+    assert blocked_payload["outcome_state"] == "blocked"
+    assert "requires confirmation" in blocked_payload["outcome_message"]
     assert response.status_code == 200
     assert payload["symbol"] == "BTC/USD"
     assert payload["requested_action"] == "start"
     assert payload["outcome_state"] == "succeeded"
     assert payload["outcome_message"] == "Runtime is running."
+    assert payload["confirmation_state"] == "confirmed"
+    assert observed_confirmation_states == ["confirmed"]
 
 
 def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path):

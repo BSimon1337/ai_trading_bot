@@ -142,6 +142,13 @@ def _control_outcome_from_runtime_state(runtime_state: str) -> str:
     return "pending"
 
 
+def _requested_mode_context(mode: str | None, config: BotConfig) -> str:
+    normalized_mode = (mode or "").strip().lower()
+    if normalized_mode in {"live", "paper"}:
+        return normalized_mode
+    return "paper" if config.paper else "live"
+
+
 def _save_control_action(
     registry_file: Path,
     config: BotConfig,
@@ -926,7 +933,7 @@ def request_start_runtime_action(
     config: BotConfig,
     symbol: str,
     *,
-    mode: str = "live",
+    mode: str | None = None,
     registry_path: Path | None = None,
     popen_factory: Any = subprocess.Popen,
     cwd: Path | None = None,
@@ -936,7 +943,25 @@ def request_start_runtime_action(
 ) -> ManagedControlAction:
     registry_file = Path(registry_path or config.runtime_registry_path)
     current_runtime = current_runtime_for_symbol(load_runtime_registry(registry_file), symbol)
-    mode_context = "paper" if config.paper else "live"
+    mode_context = _requested_mode_context(mode, config)
+    if requested_from == "dashboard" and mode_context == "live" and confirmation_state != "confirmed":
+        return _save_control_action(
+            registry_file,
+            config,
+            ManagedControlAction(
+                action_id=uuid4().hex,
+                symbol=symbol,
+                asset_class=infer_asset_class(symbol),
+                requested_action="start",
+                mode_context=mode_context,
+                requested_at_utc=utc_now_iso(),
+                requested_from=requested_from,
+                confirmation_state=confirmation_state,
+                outcome_state="blocked",
+                outcome_message=f"Live start requires confirmation. Enter {config.live_confirmation_token} to continue.",
+                runtime_session_id="" if current_runtime is None else current_runtime.session_id,
+            ),
+        )
     if current_runtime is not None and current_runtime.lifecycle_state in {"starting", "running", "restarting", "stopping"}:
         return _save_control_action(
             registry_file,
@@ -959,7 +984,7 @@ def request_start_runtime_action(
     result = start_managed_runtime(
         config,
         symbol,
-        mode=mode,
+        mode=mode_context,
         registry_path=registry_file,
         popen_factory=popen_factory,
         cwd=cwd,
@@ -1043,7 +1068,7 @@ def request_restart_runtime_action(
     config: BotConfig,
     symbol: str,
     *,
-    mode: str = "live",
+    mode: str | None = None,
     registry_path: Path | None = None,
     terminate_process: Any = _terminate_process,
     popen_factory: Any = subprocess.Popen,
@@ -1054,7 +1079,25 @@ def request_restart_runtime_action(
 ) -> ManagedControlAction:
     registry_file = Path(registry_path or config.runtime_registry_path)
     current_runtime = current_runtime_for_symbol(load_runtime_registry(registry_file), symbol)
-    mode_context = "paper" if config.paper else "live"
+    mode_context = _requested_mode_context(mode, config)
+    if requested_from == "dashboard" and mode_context == "live" and confirmation_state != "confirmed":
+        return _save_control_action(
+            registry_file,
+            config,
+            ManagedControlAction(
+                action_id=uuid4().hex,
+                symbol=symbol,
+                asset_class=infer_asset_class(symbol),
+                requested_action="restart",
+                mode_context=mode_context,
+                requested_at_utc=utc_now_iso(),
+                requested_from=requested_from,
+                confirmation_state=confirmation_state,
+                outcome_state="blocked",
+                outcome_message=f"Live restart requires confirmation. Enter {config.live_confirmation_token} to continue.",
+                runtime_session_id="" if current_runtime is None else current_runtime.session_id,
+            ),
+        )
     if current_runtime is not None and current_runtime.lifecycle_state in {"starting", "stopping", "restarting"}:
         return _save_control_action(
             registry_file,
@@ -1077,7 +1120,7 @@ def request_restart_runtime_action(
     result = restart_managed_runtime(
         config,
         symbol,
-        mode=mode,
+        mode=mode_context,
         registry_path=registry_file,
         terminate_process=terminate_process,
         popen_factory=popen_factory,

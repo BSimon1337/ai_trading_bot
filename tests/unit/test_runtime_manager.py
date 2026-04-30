@@ -213,6 +213,39 @@ def test_add_control_action_ignores_non_positive_limit():
     assert registry.recent_control_actions[-1].action_id == f"action-{DEFAULT_RECENT_CONTROL_ACTIONS_LIMIT + 1}"
 
 
+def test_add_control_action_preserves_recent_order_for_mixed_asset_activity():
+    registry = RuntimeRegistry()
+
+    registry = add_control_action(
+        registry,
+        _control_action(symbol="SPY", action_id="stock-start", requested_at_utc="2026-04-28T02:00:00+00:00"),
+        recent_limit=5,
+    )
+    registry = add_control_action(
+        registry,
+        _control_action(
+            symbol="BTC/USD",
+            action_id="crypto-restart",
+            requested_action="restart",
+            requested_at_utc="2026-04-28T02:05:00+00:00",
+        ),
+        recent_limit=5,
+    )
+    registry = add_control_action(
+        registry,
+        _control_action(
+            symbol="SPY",
+            action_id="stock-stop",
+            requested_action="stop",
+            mode_context="paper",
+            requested_at_utc="2026-04-28T02:10:00+00:00",
+        ),
+        recent_limit=2,
+    )
+
+    assert [action.action_id for action in registry.recent_control_actions] == ["crypto-restart", "stock-stop"]
+
+
 def test_build_symbol_runtime_config_uses_symbol_scoped_log_paths():
     config = make_bot_config(symbols=("BTC/USD", "ETH/USD"))
 
@@ -552,6 +585,30 @@ def test_request_start_runtime_action_blocks_already_running_runtime(tmp_path: P
     assert "already running" in action.outcome_message
 
 
+def test_request_start_runtime_action_blocks_live_dashboard_start_without_confirmation(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(
+        runtime_registry_path=str(registry_path),
+        paper=False,
+        live_trading_enabled=True,
+        live_run_confirmation="CONFIRM",
+        live_confirmation_token="CONFIRM",
+    )
+
+    action = request_start_runtime_action(
+        config,
+        "BTC/USD",
+        mode="live",
+        registry_path=registry_path,
+        requested_from="dashboard",
+        confirmation_state="missing_confirmation",
+    )
+
+    assert action.outcome_state == "blocked"
+    assert action.confirmation_state == "missing_confirmation"
+    assert "requires confirmation" in action.outcome_message
+
+
 def test_request_stop_runtime_action_blocks_when_runtime_already_stopped(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
     config = make_bot_config(runtime_registry_path=str(registry_path))
@@ -561,6 +618,38 @@ def test_request_stop_runtime_action_blocks_when_runtime_already_stopped(tmp_pat
     assert action.requested_action == "stop"
     assert action.outcome_state == "blocked"
     assert action.outcome_message == "Runtime is already stopped."
+
+
+def test_request_start_runtime_action_allows_live_dashboard_start_with_confirmation(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(
+        runtime_registry_path=str(registry_path),
+        paper=False,
+        live_trading_enabled=True,
+        live_run_confirmation="CONFIRM",
+        live_confirmation_token="CONFIRM",
+    )
+
+    class FakeProcess:
+        pid = 4567
+
+    def fake_popen(command, cwd=None, env=None):
+        del command, cwd, env
+        return FakeProcess()
+
+    action = request_start_runtime_action(
+        config,
+        "BTC/USD",
+        mode="live",
+        registry_path=registry_path,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+        requested_from="dashboard",
+        confirmation_state="confirmed",
+    )
+
+    assert action.outcome_state == "succeeded"
+    assert action.confirmation_state == "confirmed"
 
 
 def test_request_restart_runtime_action_records_new_session_for_successful_restart(tmp_path: Path):
@@ -605,3 +694,27 @@ def test_request_restart_runtime_action_records_new_session_for_successful_resta
     assert action.outcome_state == "succeeded"
     assert action.runtime_session_id != start_result.session_id
     assert registry.recent_control_actions[-1] == action
+
+
+def test_request_restart_runtime_action_blocks_live_dashboard_restart_without_confirmation(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(
+        runtime_registry_path=str(registry_path),
+        paper=False,
+        live_trading_enabled=True,
+        live_run_confirmation="CONFIRM",
+        live_confirmation_token="CONFIRM",
+    )
+
+    action = request_restart_runtime_action(
+        config,
+        "BTC/USD",
+        mode="live",
+        registry_path=registry_path,
+        requested_from="dashboard",
+        confirmation_state="invalid_confirmation",
+    )
+
+    assert action.outcome_state == "blocked"
+    assert action.confirmation_state == "invalid_confirmation"
+    assert "requires confirmation" in action.outcome_message

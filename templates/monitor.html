@@ -120,6 +120,12 @@
       margin-top: 12px;
     }
     .control-form { margin: 0; }
+    .control-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
     .control-button {
       appearance: none;
       border: 1px solid var(--line);
@@ -139,6 +145,23 @@
       margin-top: 8px;
       color: var(--muted);
       font-size: 12px;
+    }
+    .control-input {
+      min-width: 132px;
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 42, .88);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .control-context {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .control-context.live {
+      color: #fca5a5;
     }
     .pnl-pos { color: var(--ok); }
     .pnl-neg { color: var(--bad); }
@@ -286,39 +309,55 @@
     </section>
     {% endif %}
 
-    {% if recent_control_actions %}
     <section class="panel">
       <h2>Recent Control Activity</h2>
+      <div class="empty" style="padding-bottom:0">
+        {{ recent_control_activity_count }} retained action(s)
+        {% if latest_control_updated_at_utc %}
+        | latest update {{ latest_control_updated_at_utc }}
+        {% endif %}
+      </div>
+      {% if recent_control_actions %}
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
+              <th>timestamp_utc</th>
               <th>requested_at_utc</th>
               <th>symbol</th>
               <th>asset_class</th>
               <th>mode_context</th>
               <th>requested_action</th>
+              <th>requested_from</th>
+              <th>confirmation_state</th>
               <th>outcome_state</th>
               <th>outcome_message</th>
+              <th>runtime_session_id</th>
             </tr>
           </thead>
           <tbody>
             {% for action in recent_control_actions %}
             <tr>
+              <td>{{ action.timestamp_utc }}</td>
               <td>{{ action.requested_at_utc }}</td>
               <td>{{ action.symbol }}</td>
               <td>{{ action.asset_class }}</td>
               <td>{{ action.mode_context }}</td>
               <td>{{ action.requested_action }}</td>
+              <td>{{ action.requested_from }}</td>
+              <td>{{ action.confirmation_state }}</td>
               <td>{{ action.outcome_state }}</td>
               <td>{{ action.outcome_message }}</td>
+              <td>{{ action.runtime_session_id or "Unavailable" }}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
+      {% else %}
+      <div class="empty">No recent control activity yet.</div>
+      {% endif %}
     </section>
-    {% endif %}
 
     {% if historical_context.historical_issue_count or historical_context.historical_instance_count %}
     <section class="panel">
@@ -488,22 +527,35 @@
         </p>
         <div class="control-row">
           <form class="control-form" data-action="/control/start" data-symbol="{{ instance.label }}" data-mode="{{ instance.control_mode_context }}">
-            <input type="hidden" name="symbol" value="{{ instance.label }}">
-            <input type="hidden" name="mode_context" value="{{ instance.control_mode_context }}">
-            <button class="control-button" type="submit" {% if not instance.can_start %}disabled{% endif %}>Start</button>
+            <div class="control-group">
+              <input type="hidden" name="symbol" value="{{ instance.label }}">
+              <input type="hidden" name="mode_context" value="{{ instance.control_mode_context }}">
+              {% if instance.requires_live_confirmation %}
+              <input class="control-input" type="password" name="live_confirmation" placeholder="Confirm live start">
+              {% endif %}
+              <button class="control-button" type="submit" {% if not instance.can_start %}disabled{% endif %}>Start</button>
+            </div>
           </form>
           <form class="control-form" data-action="/control/stop" data-symbol="{{ instance.label }}" data-mode="{{ instance.control_mode_context }}">
-            <input type="hidden" name="symbol" value="{{ instance.label }}">
-            <input type="hidden" name="mode_context" value="{{ instance.control_mode_context }}">
-            <button class="control-button" type="submit" {% if not instance.can_stop %}disabled{% endif %}>Stop</button>
+            <div class="control-group">
+              <input type="hidden" name="symbol" value="{{ instance.label }}">
+              <input type="hidden" name="mode_context" value="{{ instance.control_mode_context }}">
+              <button class="control-button" type="submit" {% if not instance.can_stop %}disabled{% endif %}>Stop</button>
+            </div>
           </form>
           <form class="control-form" data-action="/control/restart" data-symbol="{{ instance.label }}" data-mode="{{ instance.control_mode_context }}">
-            <input type="hidden" name="symbol" value="{{ instance.label }}">
-            <input type="hidden" name="mode_context" value="{{ instance.control_mode_context }}">
-            <button class="control-button" type="submit" {% if not instance.can_restart %}disabled{% endif %}>Restart</button>
+            <div class="control-group">
+              <input type="hidden" name="symbol" value="{{ instance.label }}">
+              <input type="hidden" name="mode_context" value="{{ instance.control_mode_context }}">
+              {% if instance.requires_live_confirmation %}
+              <input class="control-input" type="password" name="live_confirmation" placeholder="Confirm live restart">
+              {% endif %}
+              <button class="control-button" type="submit" {% if not instance.can_restart %}disabled{% endif %}>Restart</button>
+            </div>
           </form>
         </div>
         <p class="control-message">{{ instance.control_availability_message }}</p>
+        <p class="control-context {% if instance.requires_live_confirmation %}live{% endif %}">{{ instance.control_confirmation_hint }}</p>
         {% if instance.issues %}
         <p class="muted" style="margin: 8px 0 0 0;">{{ instance.issues|length }} issue(s): {{ instance.issues[0].category }} - {{ instance.issues[0].message }}</p>
         {% endif %}
@@ -558,6 +610,7 @@
         <div class="card"><div class="k">Can Stop</div><div class="v" style="font-size:14px">{% if instance.can_stop %}Yes{% else %}No{% endif %}</div></div>
         <div class="card"><div class="k">Can Restart</div><div class="v" style="font-size:14px">{% if instance.can_restart %}Yes{% else %}No{% endif %}</div></div>
         <div class="card"><div class="k">Control Mode</div><div class="v" style="font-size:14px">{{ instance.control_mode_context or "unknown" }}</div></div>
+        <div class="card"><div class="k">Live Confirmation</div><div class="v" style="font-size:14px">{% if instance.requires_live_confirmation %}Required for start/restart{% else %}Not required{% endif %}</div></div>
         <div class="card"><div class="k">Lifecycle Event</div><div class="v" style="font-size:14px">{{ instance.last_lifecycle_event or "Unavailable" }}</div></div>
         <div class="card"><div class="k">Fresh Session</div><div class="v" style="font-size:14px">{% if instance.is_fresh_runtime_session %}Yes{% else %}No{% endif %}</div></div>
         <div class="card"><div class="k">Runtime Started</div><div class="v" style="font-size:14px">{{ instance.runtime_started_at_utc or "Unavailable" }}</div></div>
@@ -888,11 +941,13 @@
             body: formData,
           });
           const payload = await response.json();
+          const message = payload.outcome_message || "Control action failed.";
           if (!response.ok) {
-            window.alert(payload.outcome_message || "Control action failed.");
+            window.alert(message);
             return;
           }
-          window.alert(`${payload.requested_action}: ${payload.outcome_message}`);
+          const prefix = payload.outcome_state === "blocked" ? "Blocked" : (payload.requested_action || "control");
+          window.alert(`${prefix}: ${message}`);
           window.location.reload();
         } catch (error) {
           window.alert("Control action could not be completed.");

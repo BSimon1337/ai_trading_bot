@@ -463,6 +463,52 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
     }
 
 
+def _confirmation_state_for_request(
+    config: BotConfig,
+    *,
+    mode_context: str,
+    requested_action: str,
+    provided_confirmation: str,
+) -> tuple[str, str]:
+    normalized_mode = (mode_context or "").strip().lower()
+    normalized_action = (requested_action or "").strip().lower()
+    confirmation = (provided_confirmation or "").strip()
+    live_actions = {"start", "restart"}
+    if normalized_mode != "live" or normalized_action not in live_actions:
+        return "not_required", ""
+    if confirmation == config.live_confirmation_token:
+        return "confirmed", ""
+    token_hint = config.live_confirmation_token or "CONFIRM"
+    return (
+        "missing_confirmation" if not confirmation else "invalid_confirmation",
+        f"Live {normalized_action} requires confirmation. Enter {token_hint} to continue.",
+    )
+
+
+def _blocked_control_action(
+    *,
+    symbol: str,
+    requested_action: str,
+    mode_context: str,
+    asset_class: str,
+    confirmation_state: str,
+    outcome_message: str,
+) -> ManagedControlAction:
+    return ManagedControlAction(
+        action_id=f"blocked-{requested_action}-{symbol}-{int(datetime.now(timezone.utc).timestamp())}",
+        symbol=symbol,
+        asset_class=asset_class,
+        requested_action=requested_action,
+        mode_context=mode_context,
+        requested_at_utc=_utc_now_iso(),
+        requested_from="dashboard",
+        confirmation_state=confirmation_state,
+        outcome_state="blocked",
+        outcome_message=outcome_message,
+        runtime_session_id="",
+    )
+
+
 def _control_action_to_dict(action: ManagedControlAction) -> dict[str, Any]:
     timestamp = pd.to_datetime(action.requested_at_utc, errors="coerce", utc=True)
     requested_at = action.requested_at_utc
@@ -470,6 +516,7 @@ def _control_action_to_dict(action: ManagedControlAction) -> dict[str, Any]:
         requested_at = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
     return {
         "action_id": action.action_id,
+        "timestamp_utc": action.requested_at_utc,
         "symbol": action.symbol,
         "asset_class": action.asset_class,
         "requested_action": action.requested_action,
@@ -501,10 +548,13 @@ def _load_recent_control_actions(
             )
         )
         _, _, actions, updated_at_utc = load_runtime_registry_views(registry_path)
+    effective_limit = max(1, limit)
+    if config is not None:
+        effective_limit = max(1, int(config.runtime_recent_control_actions_limit))
     sorted_actions = sorted(actions or (), key=lambda item: item.requested_at_utc, reverse=True)
     if not sorted_actions:
         updated_at_utc = ""
-    return ([_control_action_to_dict(action) for action in sorted_actions[:limit]], updated_at_utc)
+    return ([_control_action_to_dict(action) for action in sorted_actions[:effective_limit]], updated_at_utc)
 
 
 def _request_value(name: str, default: str = "") -> str:
@@ -1279,7 +1329,7 @@ def summarize_instance(
     )
 
 
-def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
+def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None = None) -> dict[str, Any]:
     latest_decision = instance.latest_decision or DecisionSummary()
     latest_fill = instance.latest_fill or FillSummary()
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
@@ -1355,6 +1405,15 @@ def _instance_payload(instance: DashboardInstance) -> dict[str, Any]:
         "can_restart": control_availability["can_restart"],
         "control_availability_message": control_availability["control_availability_message"],
         "requires_live_confirmation": control_availability["requires_live_confirmation"],
+        "control_confirmation_hint": (
+            f"Enter {config.live_confirmation_token} before live start or restart."
+            if control_availability["requires_live_confirmation"] and config is not None
+            else (
+                "Live start and restart require explicit confirmation."
+                if control_availability["requires_live_confirmation"]
+                else "Paper controls do not require live confirmation."
+            )
+        ),
         "last_decision_utc": latest_decision.timestamp or "",
         "last_fill_utc": latest_fill.timestamp or "",
         "heartbeat_age_minutes": instance.status.age_minutes,
@@ -1529,9 +1588,10 @@ def dashboard_status(
             stale_after_minutes=stale_after_minutes,
             historical_issue_limit=historical_issue_limit,
         ),
-        "instances": [_instance_payload(instance) for instance in display_instances],
+        "instances": [_instance_payload(instance, config=config) for instance in display_instances],
         "recent_control_actions": recent_control_rows,
         "latest_control_updated_at_utc": latest_control_updated_at_utc,
+        "recent_control_activity_count": len(recent_control_rows),
         "issues": [_issue_to_dict(issue) for issue in issues],
         "notes": [_note_to_dict(note) for note in _sort_notes(notes)],
         "recent_activity_columns": ["timestamp", "instance_label", "mode", "symbol", "action", "action_source", "quantity", "reason", "result"],
@@ -1594,12 +1654,32 @@ def create_app(
         if not symbol:
             return jsonify({"outcome_state": "blocked", "outcome_message": "A symbol is required."}), 400
         mode_context = _request_value("mode_context", "paper" if config.paper else "live") or ("paper" if config.paper else "live")
+        confirmation_value = _request_value("live_confirmation")
+        confirmation_state, confirmation_error = _confirmation_state_for_request(
+            config,
+            mode_context=mode_context,
+            requested_action="start",
+            provided_confirmation=confirmation_value,
+        )
+        if confirmation_error:
+            return jsonify(
+                _control_response(
+                    _blocked_control_action(
+                        symbol=symbol,
+                        requested_action="start",
+                        mode_context=mode_context,
+                        asset_class=infer_asset_class(symbol),
+                        confirmation_state=confirmation_state,
+                        outcome_message=confirmation_error,
+                    )
+                )
+            )
         action = start_action_runner(
             config,
             symbol,
             mode="paper" if mode_context == "paper" else "live",
             requested_from="dashboard",
-            confirmation_state="not_required",
+            confirmation_state=confirmation_state,
         )
         return jsonify(_control_response(action))
 
@@ -1625,12 +1705,32 @@ def create_app(
         if not symbol:
             return jsonify({"outcome_state": "blocked", "outcome_message": "A symbol is required."}), 400
         mode_context = _request_value("mode_context", "paper" if config.paper else "live") or ("paper" if config.paper else "live")
+        confirmation_value = _request_value("live_confirmation")
+        confirmation_state, confirmation_error = _confirmation_state_for_request(
+            config,
+            mode_context=mode_context,
+            requested_action="restart",
+            provided_confirmation=confirmation_value,
+        )
+        if confirmation_error:
+            return jsonify(
+                _control_response(
+                    _blocked_control_action(
+                        symbol=symbol,
+                        requested_action="restart",
+                        mode_context=mode_context,
+                        asset_class=infer_asset_class(symbol),
+                        confirmation_state=confirmation_state,
+                        outcome_message=confirmation_error,
+                    )
+                )
+            )
         action = restart_action_runner(
             config,
             symbol,
             mode="paper" if mode_context == "paper" else "live",
             requested_from="dashboard",
-            confirmation_state="not_required",
+            confirmation_state=confirmation_state,
         )
         return jsonify(_control_response(action))
 
