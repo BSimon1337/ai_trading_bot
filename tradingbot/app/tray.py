@@ -170,6 +170,10 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     warning_count = sum(1 for issue in issues if issue.get("severity") == "warning")
     running_runtime_count = sum(1 for instance in instances if instance.get("runtime_state") == "running")
     failed_runtime_count = sum(1 for instance in instances if instance.get("runtime_state") == "failed")
+    provisional_count = sum(1 for instance in instances if instance.get("freshness_state") == "provisional")
+    stale_portfolio_count = sum(1 for instance in instances if instance.get("freshness_state") == "stale")
+    unavailable_portfolio_count = sum(1 for instance in instances if instance.get("freshness_state") == "unavailable")
+    historical_portfolio_count = sum(1 for instance in instances if instance.get("freshness_state") == "historical")
     live_control_count = sum(
         1
         for instance in instances
@@ -197,6 +201,10 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     historical_summary = f" Historical: {historical_issue_count}." if historical_issue_count else ""
     runtime_summary = f" Running runtimes: {running_runtime_count}. Failed runtimes: {failed_runtime_count}."
     mode_summary = f" Live controls: {live_control_count}. Paper controls: {paper_control_count}."
+    portfolio_state_summary = (
+        f" Portfolio freshness - provisional: {provisional_count}, stale: {stale_portfolio_count}, "
+        f"unavailable: {unavailable_portfolio_count}, historical: {historical_portfolio_count}."
+    )
     latest_control_summary = ""
     if recent_control_actions:
         latest = recent_control_actions[0]
@@ -223,7 +231,8 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     refresh_summary = f" Runtime refresh: {latest_runtime_refresh}." if latest_runtime_refresh else ""
     tooltip = (
         f"{summary} Instances: {instance_count}. {issue_summary} Notes: {note_count}."
-        f"{runtime_summary}{mode_summary}{latest_control_summary}{latest_warning_summary}{refresh_summary}{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
+        f"{runtime_summary}{mode_summary}{portfolio_state_summary}"
+        f"{latest_control_summary}{latest_warning_summary}{refresh_summary}{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
     )
     return TrayState(
         label=label,

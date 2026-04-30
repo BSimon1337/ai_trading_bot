@@ -964,6 +964,7 @@ def _freshness_state_for_instance(
     latest_snapshot: SnapshotSummary,
     *,
     is_provisional: bool,
+    held_value_source: str = VALUE_SOURCE_UNAVAILABLE,
     stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
 ) -> EvidenceFreshnessState:
     if instance.evidence_scope == "historical":
@@ -994,6 +995,15 @@ def _freshness_state_for_instance(
             snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
             runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
             explanation="Portfolio values are temporarily derived from fresher fill evidence than the latest snapshot.",
+        )
+    if held_value_source == VALUE_SOURCE_UNAVAILABLE and to_float(latest_snapshot.position_qty) > 0:
+        return EvidenceFreshnessState(
+            freshness_label="unavailable",
+            decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+            fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+            snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+            runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+            explanation="Current runtime evidence is available, but symbol-local portfolio value is waiting on a confirmed fill or snapshot update.",
         )
     return EvidenceFreshnessState(
         freshness_label="current",
@@ -1492,15 +1502,17 @@ def _select_authoritative_account_instance(
     for instance in instances:
         snapshot = instance.latest_snapshot
         snapshot_ts = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
+        fill = instance.latest_fill
+        fill_ts = _parse_instance_timestamp(fill.timestamp if fill is not None else None)
         last_update_ts = _parse_instance_timestamp(instance.last_updated_at)
-        if snapshot_ts is not None:
-            fallback_candidates.append((snapshot_ts, instance))
-            if snapshot_ts >= cutoff:
-                candidates.append((snapshot_ts, instance))
-        elif last_update_ts is not None:
-            fallback_candidates.append((last_update_ts, instance))
-            if last_update_ts >= cutoff:
-                candidates.append((last_update_ts, instance))
+        evidence_ts = max(
+            [timestamp for timestamp in (fill_ts, snapshot_ts, last_update_ts) if timestamp is not None],
+            default=None,
+        )
+        if evidence_ts is not None:
+            fallback_candidates.append((evidence_ts, instance))
+            if evidence_ts >= cutoff:
+                candidates.append((evidence_ts, instance))
     ranked = candidates or fallback_candidates
     if not ranked:
         return instances[0]
@@ -1511,6 +1523,8 @@ def _select_authoritative_account_instance(
 def _value_evidence(
     snapshot: SnapshotSummary | None,
     fill: FillSummary | None,
+    *,
+    allow_snapshot_delta: bool = True,
 ) -> tuple[float, float, str]:
     position_qty = to_float(snapshot.position_qty if snapshot is not None else None)
     fill_qty = to_float(fill.quantity if fill is not None else None)
@@ -1518,6 +1532,9 @@ def _value_evidence(
     if fill_qty > 0 and fill_notional > 0:
         unit_value = fill_notional / fill_qty
         return unit_value, position_qty * unit_value, VALUE_SOURCE_FILL
+
+    if not allow_snapshot_delta:
+        return 0.0, 0.0, VALUE_SOURCE_UNAVAILABLE
 
     portfolio_value = to_float(snapshot.portfolio_value if snapshot is not None else None)
     cash = to_float(snapshot.cash if snapshot is not None else None)
@@ -1532,6 +1549,8 @@ def _value_evidence(
 def _effective_portfolio_state(
     snapshot: SnapshotSummary | None,
     fill: FillSummary | None,
+    *,
+    allow_snapshot_delta: bool = True,
 ) -> dict[str, Any]:
     snapshot_qty = to_float(snapshot.position_qty if snapshot is not None else None)
     snapshot_cash = to_float(snapshot.cash if snapshot is not None else None)
@@ -1573,7 +1592,11 @@ def _effective_portfolio_state(
                 "is_provisional": True,
             }
 
-    latest_fill_price, held_value_estimate, held_value_source = _value_evidence(snapshot, fill)
+    latest_fill_price, held_value_estimate, held_value_source = _value_evidence(
+        snapshot,
+        fill,
+        allow_snapshot_delta=allow_snapshot_delta,
+    )
     held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
     return {
         "position_qty": display_qty,
@@ -1584,6 +1607,40 @@ def _effective_portfolio_state(
         "held_value_source": held_value_source,
         "latest_fill_price": latest_fill_price,
         "is_provisional": False,
+    }
+
+
+def _effective_account_state(
+    snapshot: SnapshotSummary | None,
+    fill: FillSummary | None,
+) -> dict[str, Any]:
+    snapshot_cash = to_float(snapshot.cash if snapshot is not None else None)
+    snapshot_portfolio = to_float(snapshot.portfolio_value if snapshot is not None else None)
+    snapshot_timestamp = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
+
+    fill_timestamp = _parse_instance_timestamp(fill.timestamp if fill is not None else None)
+    fill_result = (fill.result if fill is not None else "").strip().lower()
+    fill_cash = to_float(fill.cash if fill is not None else None)
+    fill_portfolio = to_float(fill.portfolio_value if fill is not None else None)
+
+    is_provisional = False
+    account_cash = snapshot_cash
+    account_equity = snapshot_portfolio
+    source = "snapshot"
+
+    if fill_timestamp is not None and (snapshot_timestamp is None or fill_timestamp > snapshot_timestamp) and fill_result == "filled":
+        if fill_cash > 0:
+            account_cash = fill_cash
+        if fill_portfolio > 0:
+            account_equity = fill_portfolio
+        is_provisional = True
+        source = VALUE_SOURCE_FILL_DELTA
+
+    return {
+        "cash": account_cash,
+        "account_equity": account_equity,
+        "is_provisional": is_provisional,
+        "source": source,
     }
 
 
@@ -1901,7 +1958,12 @@ def summarize_instance(
     )
 
 
-def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None = None) -> dict[str, Any]:
+def _instance_payload(
+    instance: DashboardInstance,
+    *,
+    config: BotConfig | None = None,
+    active_instance_count: int = 1,
+) -> dict[str, Any]:
     latest_decision = instance.latest_decision or DecisionSummary()
     latest_fill = instance.latest_fill or FillSummary()
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
@@ -1933,7 +1995,11 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
             actions_7d[action] = int(counts.get(action, 0))
     recent_decisions = _recent_rows(decisions)
     recent_fills = _recent_rows(fills)
-    effective_portfolio = _effective_portfolio_state(latest_snapshot, latest_fill)
+    effective_portfolio = _effective_portfolio_state(
+        latest_snapshot,
+        latest_fill,
+        allow_snapshot_delta=active_instance_count <= 1,
+    )
     sentiment_summary = _latest_sentiment_summary(decisions) or latest_decision
     current_sentiment = _sentiment_snapshot(sentiment_summary)
     headline_preview = _headline_evidence_preview(sentiment_summary)
@@ -1970,6 +2036,7 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         latest_fill,
         latest_snapshot,
         is_provisional=effective_portfolio["is_provisional"],
+        held_value_source=effective_portfolio["held_value_source"],
     )
     return {
         "label": instance.label,
@@ -2115,14 +2182,14 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
             "is_stale": True,
         }
     snapshot = freshest.latest_snapshot or SnapshotSummary()
-    effective_portfolio = _effective_portfolio_state(snapshot, freshest.latest_fill)
+    effective_account = _effective_account_state(snapshot, freshest.latest_fill)
     latest_update = snapshot.timestamp or freshest.last_updated_at or ""
     latest_update_ts = _parse_instance_timestamp(latest_update)
     is_stale = True if latest_update_ts is None else (_age_minutes(latest_update_ts) or 0.0) > DEFAULT_STALE_AFTER_MINUTES
     instances_with_fills = sum(1 for instance in active_instances if instance.latest_fill is not None)
     return {
-        "account_equity": effective_portfolio["portfolio_value"],
-        "cash": effective_portfolio["cash"],
+        "account_equity": effective_account["account_equity"],
+        "cash": effective_account["cash"],
         "day_pnl": to_float(snapshot.day_pnl),
         "active_instances": len(active_instances),
         "instances_count": len(active_instances),
@@ -2131,6 +2198,8 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
         "source_instance": freshest.label,
         "latest_update_utc": latest_update,
         "is_stale": is_stale,
+        "is_provisional": effective_account["is_provisional"],
+        "source": effective_account["source"],
     }
 
 
@@ -2175,6 +2244,7 @@ def dashboard_status(
     ]
     active_instances = [instance for instance in summarized if instance.evidence_scope != "historical"]
     display_instances = active_instances or summarized
+    active_instance_count = len(active_instances)
     issues = [issue for instance in display_instances for issue in instance.issues]
     notes = [note for instance in display_instances for note in instance.notes]
     recent_activity = _collect_recent_activity(display_instances)
@@ -2191,7 +2261,14 @@ def dashboard_status(
             stale_after_minutes=stale_after_minutes,
             historical_issue_limit=historical_issue_limit,
         ),
-        "instances": [_instance_payload(instance, config=config) for instance in display_instances],
+        "instances": [
+            _instance_payload(
+                instance,
+                config=config,
+                active_instance_count=active_instance_count or len(display_instances),
+            )
+            for instance in display_instances
+        ],
         "recent_control_actions": recent_control_rows,
         "latest_control_updated_at_utc": latest_control_updated_at_utc,
         "recent_control_activity_count": len(recent_control_rows),

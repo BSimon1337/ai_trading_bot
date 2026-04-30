@@ -57,6 +57,8 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "instances_count",
         "instances_with_fills",
         "is_stale",
+        "is_provisional",
+        "source",
     }
     assert payload["instances"][0]["label"] == "BTC/USD"
     assert set(payload["instances"][0]) >= {
@@ -209,6 +211,77 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert payload["recent_control_actions"][0]["confirmation_state"] == "confirmed"
     assert payload["recent_control_actions"][0]["runtime_session_id"] == "session-btc"
     assert payload["recent_control_activity_count"] == 1
+
+
+def test_dashboard_contract_keeps_symbol_local_portfolio_state_isolated_in_mixed_runs(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    now = datetime.now(timezone.utc)
+    snapshot_header = "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl"
+    fill_header = "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result"
+
+    btc_paths["snapshot"].write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - timedelta(seconds=30)).isoformat()},live,BTC/USD,96.27,2.80,0.00026000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_paths["snapshot"].write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - timedelta(seconds=30)).isoformat()},live,ETH/USD,96.27,2.80,0.00000000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_paths["fills"].write_text(
+        "\n".join(
+            [
+                fill_header,
+                f"{now.isoformat()},live,ETH/USD,crypto,buy,0.00702909,order-1,96.27,80.414264,15.855736,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    )
+    payload = app.test_client().get("/api/status").get_json()
+    items = {item["label"]: item for item in payload["instances"]}
+
+    assert items["BTC/USD"]["held_value"] is None
+    assert items["BTC/USD"]["held_value_source"] == "unavailable"
+    assert items["BTC/USD"]["freshness_state"] == "unavailable"
+    assert items["ETH/USD"]["held_value_source"] == "latest_fill_delta"
+    assert items["ETH/USD"]["portfolio_is_provisional"] is True
+    assert items["ETH/USD"]["freshness_state"] == "provisional"
+    assert payload["account_overview"]["cash"] == 80.414264
 
 
 def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_path):

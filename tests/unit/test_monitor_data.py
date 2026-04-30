@@ -18,8 +18,10 @@ from tests.fixtures.monitor.build_fixtures import (
 )
 from tradingbot.app.monitor import (
     DEFAULT_HEADLINE_PREVIEW_LIMIT,
+    FillSummary,
     VALUE_SOURCE_FILL_DELTA,
     VALUE_SOURCE_SNAPSHOT_DELTA,
+    VALUE_SOURCE_UNAVAILABLE,
     _normalize_snapshot_frame,
     _filter_active_evidence,
     _headline_evidence_preview,
@@ -1237,6 +1239,57 @@ def test_value_evidence_falls_back_to_snapshot_delta_when_recent_fill_missing():
     assert source == VALUE_SOURCE_SNAPSHOT_DELTA
 
 
+def test_select_authoritative_account_instance_prefers_fresher_fill_over_older_snapshot():
+    old_summary = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=Path("logs/btc/decisions.csv"),
+        fill_log_path=Path("logs/btc/fills.csv"),
+        snapshot_log_path=Path("logs/btc/daily_snapshot.csv"),
+        latest_snapshot=SnapshotSummary(timestamp="2026-04-25T13:20:00+00:00"),
+    )
+    fill_fresh_summary = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=Path("logs/eth/decisions.csv"),
+        fill_log_path=Path("logs/eth/fills.csv"),
+        snapshot_log_path=Path("logs/eth/daily_snapshot.csv"),
+        latest_snapshot=SnapshotSummary(timestamp="2026-04-25T13:15:00+00:00"),
+        latest_fill=FillSummary(timestamp="2026-04-25T13:25:00+00:00"),
+    )
+
+    selected = _select_authoritative_account_instance(
+        [old_summary, fill_fresh_summary],
+        reference=datetime(2026, 4, 25, 13, 30, tzinfo=timezone.utc),
+        stale_after_minutes=180,
+    )
+
+    assert selected is not None
+    assert selected.label == "ETH/USD"
+
+
+def test_value_evidence_skips_snapshot_delta_when_symbol_local_values_are_required():
+    unit_value, held_value, source = _value_evidence(
+        SnapshotSummary(
+            timestamp="2026-04-25T13:20:00+00:00",
+            mode="live",
+            symbol="BTC/USD",
+            portfolio_value="100.0",
+            cash="80.0",
+            position_qty="2.0",
+            day_pnl="0.5",
+        ),
+        None,
+        allow_snapshot_delta=False,
+    )
+
+    assert unit_value == 0.0
+    assert held_value == 0.0
+    assert source == VALUE_SOURCE_UNAVAILABLE
+
+
 def test_dashboard_status_uses_snapshot_delta_held_value_without_recent_fill(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "no_recent_fill", symbol="BTC/USD")
     instance = DashboardInstance(
@@ -1297,6 +1350,138 @@ def test_dashboard_status_uses_provisional_fill_state_when_fill_is_newer_than_sn
     assert item["portfolio_is_provisional"] is True
     assert item["freshness_state"] == "provisional"
     assert "fresher fill evidence" in item["freshness_explanation"]
+
+
+def test_dashboard_status_prevents_snapshot_delta_leakage_across_mixed_symbols(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+
+    now = datetime.now(timezone.utc)
+    shared_snapshot_row = "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl"
+    Path(btc_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                shared_snapshot_row,
+                f"{now.isoformat()},live,BTC/USD,96.27,2.80,0.00026000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(eth_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                shared_snapshot_row,
+                f"{now.isoformat()},live,ETH/USD,96.27,2.80,0.00701200,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    )
+
+    btc_item, eth_item = payload["instances"]
+    assert btc_item["held_value"] is None
+    assert eth_item["held_value"] is None
+    assert btc_item["held_value_source"] == VALUE_SOURCE_UNAVAILABLE
+    assert eth_item["held_value_source"] == VALUE_SOURCE_UNAVAILABLE
+    assert btc_item["freshness_state"] == "unavailable"
+    assert eth_item["freshness_state"] == "unavailable"
+    assert payload["account_overview"]["account_equity"] == 96.27
+    assert payload["account_overview"]["cash"] == 2.8
+
+
+def test_dashboard_status_uses_symbol_local_fill_delta_without_polluting_other_symbols(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+
+    now = datetime.now(timezone.utc)
+    snapshot_header = "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl"
+    fill_header = "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result"
+    Path(btc_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - pd.Timedelta(seconds=30)).isoformat()},live,BTC/USD,96.27,2.80,0.00026000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(eth_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - pd.Timedelta(seconds=30)).isoformat()},live,ETH/USD,96.27,2.80,0.00000000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(eth_paths["fills"]).write_text(
+        "\n".join(
+            [
+                fill_header,
+                f"{now.isoformat()},live,ETH/USD,crypto,buy,0.00702909,order-1,96.27,80.414264,15.855736,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    )
+
+    btc_item, eth_item = payload["instances"]
+    assert btc_item["held_value"] is None
+    assert btc_item["held_value_source"] == VALUE_SOURCE_UNAVAILABLE
+    assert btc_item["freshness_state"] == "unavailable"
+    assert eth_item["held_value_source"] == VALUE_SOURCE_FILL_DELTA
+    assert eth_item["portfolio_is_provisional"] is True
+    assert eth_item["freshness_state"] == "provisional"
+    assert eth_item["position_qty"] == 0.00702909
+    assert eth_item["held_value"] is not None
 
 
 def test_dashboard_status_exposes_symbol_scoped_warning_events(tmp_path):

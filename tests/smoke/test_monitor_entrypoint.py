@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import monitor_app
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture
 from tradingbot.app.monitor import DashboardInstance
@@ -354,3 +356,73 @@ def test_monitor_app_refreshes_runtime_truth_after_unexpected_exit(monkeypatch, 
     assert payload["instances"][0]["runtime_state"] == "failed"
     assert payload["instances"][0]["status"]["state"] == "failed"
     assert "Runtime process exited unexpectedly." in page_text
+
+
+def test_monitor_app_keeps_mixed_symbol_portfolio_values_isolated_after_startup(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    now = datetime.now(timezone.utc)
+
+    btc_paths["snapshot"].write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                f"{(now - timedelta(seconds=30)).isoformat()},live,BTC/USD,96.27,2.80,0.00026000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_paths["snapshot"].write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                f"{(now - timedelta(seconds=30)).isoformat()},live,ETH/USD,96.27,2.80,0.00000000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_paths["fills"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result",
+                f"{now.isoformat()},live,ETH/USD,crypto,buy,0.00702909,order-1,96.27,80.414264,15.855736,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client = monitor_app.create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    ).test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+    items = {item["label"]: item for item in payload["instances"]}
+
+    assert items["BTC/USD"]["held_value"] is None
+    assert items["BTC/USD"]["held_value_source"] == "unavailable"
+    assert items["BTC/USD"]["freshness_state"] == "unavailable"
+    assert items["ETH/USD"]["held_value_source"] == "latest_fill_delta"
+    assert "Portfolio Freshness" in page_text
+    assert "Account Cash" in page_text

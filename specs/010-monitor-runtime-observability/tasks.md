@@ -100,18 +100,18 @@
 
 ### Tests for User Story 3
 
-- [ ] T030 [P] [US3] Add unit coverage for symbol-local effective portfolio-state derivation and leakage prevention in `tests/unit/test_monitor_data.py`
-- [ ] T031 [P] [US3] Add unit coverage for mixed-symbol runtime and snapshot edge cases in `tests/unit/test_runtime_manager.py`
-- [ ] T032 [P] [US3] Add contract checks for provisional-state, held-value-source, and freshness fields in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T033 [P] [US3] Add smoke or entrypoint coverage for mixed-symbol refresh consistency in `tests/smoke/test_monitor_entrypoint.py`
+- [x] T030 [P] [US3] Add unit coverage for symbol-local effective portfolio-state derivation and leakage prevention in `tests/unit/test_monitor_data.py`
+- [x] T031 [P] [US3] Add unit coverage for mixed-symbol runtime and snapshot edge cases in `tests/unit/test_runtime_manager.py`
+- [x] T032 [P] [US3] Add contract checks for provisional-state, held-value-source, and freshness fields in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T033 [P] [US3] Add smoke or entrypoint coverage for mixed-symbol refresh consistency in `tests/smoke/test_monitor_entrypoint.py`
 
 ### Implementation for User Story 3
 
-- [ ] T034 [US3] Isolate per-symbol effective portfolio-state derivation in `tradingbot/app/monitor.py`
-- [ ] T035 [US3] Separate account-overview aggregation from per-symbol held-value calculations in `tradingbot/app/monitor.py`
-- [ ] T036 [US3] Add explicit provisional-versus-confirmed freshness labeling for symbol cards in `tradingbot/app/monitor.py`
-- [ ] T037 [US3] Render consistent provisional, unavailable, stale, and historical wording across stock and crypto cards in `templates/monitor.html`
-- [ ] T038 [US3] Keep tray summary language aligned with the same freshness semantics in `tradingbot/app/tray.py`
+- [x] T034 [US3] Isolate per-symbol effective portfolio-state derivation in `tradingbot/app/monitor.py`
+- [x] T035 [US3] Separate account-overview aggregation from per-symbol held-value calculations in `tradingbot/app/monitor.py`
+- [x] T036 [US3] Add explicit provisional-versus-confirmed freshness labeling for symbol cards in `tradingbot/app/monitor.py`
+- [x] T037 [US3] Render consistent provisional, unavailable, stale, and historical wording across stock and crypto cards in `templates/monitor.html`
+- [x] T038 [US3] Keep tray summary language aligned with the same freshness semantics in `tradingbot/app/tray.py`
 
 **Checkpoint**: All user stories should now be independently functional, and mixed stock/crypto cards should remain consistent after startup and fills.
 

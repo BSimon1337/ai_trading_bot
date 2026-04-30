@@ -406,12 +406,12 @@
       <h2>Account Overview</h2>
       <div class="cards" style="padding: 12px;">
         <div class="card"><div class="k">Account Equity</div><div class="v">${{ "%.2f"|format(account_overview.account_equity) }}</div></div>
-        <div class="card"><div class="k">Cash</div><div class="v">${{ "%.2f"|format(account_overview.cash) }}</div></div>
+        <div class="card"><div class="k">Account Cash</div><div class="v">${{ "%.2f"|format(account_overview.cash) }}</div></div>
         <div class="card"><div class="k">Day PnL</div><div class="v {% if account_overview.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(account_overview.day_pnl) }}</div></div>
         <div class="card"><div class="k">Monitored Instances</div><div class="v">{{ account_overview.instances_count }}</div></div>
         <div class="card"><div class="k">Instances With Fills</div><div class="v">{{ account_overview.instances_with_fills }}</div></div>
         <div class="card"><div class="k">Overview Source</div><div class="v" style="font-size:14px">{{ account_overview.source_instance or "n/a" }}</div></div>
-        <div class="card"><div class="k">Overview Freshness</div><div class="v" style="font-size:14px">{% if account_overview.is_stale %}Stale{% else %}Current{% endif %}</div></div>
+        <div class="card"><div class="k">Overview Freshness</div><div class="v" style="font-size:14px">{% if account_overview.is_stale %}Stale{% elif account_overview.is_provisional %}Provisional{% else %}Current{% endif %}</div></div>
       </div>
     </section>
 
@@ -484,8 +484,12 @@
             <div class="v">{{ instance.fills_today }}</div>
           </div>
           <div class="mini">
-            <div class="k">Cash</div>
+            <div class="k">Account Cash</div>
             <div class="v">${{ "%.2f"|format(instance.cash) }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Portfolio Freshness</div>
+            <div class="v" style="font-size:14px">{{ instance.freshness_state|replace('_', ' ')|title }}</div>
           </div>
           <div class="mini">
             <div class="k">Broker Rejections</div>
@@ -558,6 +562,7 @@
         </div>
         <p class="control-message">{{ instance.control_availability_message }}</p>
         <p class="control-context {% if instance.control_mode_context == 'live' %}live{% endif %}">{{ instance.control_confirmation_hint }}</p>
+        <p class="control-context">Portfolio state: {{ instance.freshness_state|replace('_', ' ')|title }}. {{ instance.freshness_explanation }}</p>
         {% if instance.runtime_state in ["stopped", "failed"] and instance.last_decision_utc %}
         <p class="control-context">Historical evidence below is from the most recent managed runtime session.</p>
         {% endif %}
@@ -603,8 +608,10 @@
         </div>
         <div class="card"><div class="k">Held Value Source</div><div class="v" style="font-size:14px">{{ instance.held_value_source }}</div></div>
         <div class="card"><div class="k">Last Fill Price</div><div class="v">${{ "%.6f"|format(instance.latest_fill_price) }}</div></div>
-        <div class="card"><div class="k">Cash</div><div class="v">${{ "%.2f"|format(instance.cash) }}</div></div>
+        <div class="card"><div class="k">Account Cash</div><div class="v">${{ "%.2f"|format(instance.cash) }}</div></div>
         <div class="card"><div class="k">Account Equity</div><div class="v">${{ "%.2f"|format(instance.account_equity) }}</div></div>
+        <div class="card"><div class="k">Portfolio Freshness</div><div class="v" style="font-size:14px">{{ instance.freshness_state|replace('_', ' ')|title }}</div></div>
+        <div class="card"><div class="k">Freshness Detail</div><div class="v" style="font-size:14px">{{ instance.freshness_explanation }}</div></div>
         <div class="card"><div class="k">Day PnL</div><div class="v {% if instance.day_pnl >= 0 %}pnl-pos{% else %}pnl-neg{% endif %}">${{ "%.2f"|format(instance.day_pnl) }}</div></div>
         <div class="card"><div class="k">Latest Action</div><div class="v">{{ instance.latest_action }}</div></div>
         <div class="card"><div class="k">Runtime State</div><div class="v">{{ instance.runtime_state or "unmanaged" }}</div></div>

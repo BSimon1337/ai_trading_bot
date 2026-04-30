@@ -286,6 +286,15 @@ def test_symbol_log_scope_preserves_distinct_symbol_scoped_paths():
     assert "paper_validation_ethusd" in eth_scope.decision_log_path
 
 
+def test_symbol_log_scope_keeps_stock_and_crypto_snapshot_paths_isolated():
+    spy_scope = symbol_log_scope("SPY")
+    btc_scope = symbol_log_scope("BTC/USD")
+
+    assert spy_scope.snapshot_log_path.endswith("paper_validation\\daily_snapshot.csv")
+    assert btc_scope.snapshot_log_path.endswith("paper_validation_btcusd\\daily_snapshot.csv")
+    assert spy_scope.snapshot_log_path != btc_scope.snapshot_log_path
+
+
 def test_build_runtime_launch_env_records_only_symbol_scoped_runtime_inputs():
     config = make_bot_config(runtime_registry_path="logs/test/runtime_registry.json")
 
