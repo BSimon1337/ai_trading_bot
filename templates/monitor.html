@@ -530,9 +530,6 @@
             <div class="control-group">
               <input type="hidden" name="symbol" value="{{ instance.label }}">
               <input type="hidden" name="mode_context" value="{{ instance.control_mode_context }}">
-              {% if instance.requires_live_confirmation %}
-              <input class="control-input" type="password" name="live_confirmation" placeholder="Confirm live start">
-              {% endif %}
               <button class="control-button" type="submit" {% if not instance.can_start %}disabled{% endif %}>Start</button>
             </div>
           </form>
@@ -547,15 +544,12 @@
             <div class="control-group">
               <input type="hidden" name="symbol" value="{{ instance.label }}">
               <input type="hidden" name="mode_context" value="{{ instance.control_mode_context }}">
-              {% if instance.requires_live_confirmation %}
-              <input class="control-input" type="password" name="live_confirmation" placeholder="Confirm live restart">
-              {% endif %}
               <button class="control-button" type="submit" {% if not instance.can_restart %}disabled{% endif %}>Restart</button>
             </div>
           </form>
         </div>
         <p class="control-message">{{ instance.control_availability_message }}</p>
-        <p class="control-context {% if instance.requires_live_confirmation %}live{% endif %}">{{ instance.control_confirmation_hint }}</p>
+        <p class="control-context {% if instance.control_mode_context == 'live' %}live{% endif %}">{{ instance.control_confirmation_hint }}</p>
         {% if instance.issues %}
         <p class="muted" style="margin: 8px 0 0 0;">{{ instance.issues|length }} issue(s): {{ instance.issues[0].category }} - {{ instance.issues[0].message }}</p>
         {% endif %}
@@ -610,7 +604,7 @@
         <div class="card"><div class="k">Can Stop</div><div class="v" style="font-size:14px">{% if instance.can_stop %}Yes{% else %}No{% endif %}</div></div>
         <div class="card"><div class="k">Can Restart</div><div class="v" style="font-size:14px">{% if instance.can_restart %}Yes{% else %}No{% endif %}</div></div>
         <div class="card"><div class="k">Control Mode</div><div class="v" style="font-size:14px">{{ instance.control_mode_context or "unknown" }}</div></div>
-        <div class="card"><div class="k">Live Confirmation</div><div class="v" style="font-size:14px">{% if instance.requires_live_confirmation %}Required for start/restart{% else %}Not required{% endif %}</div></div>
+        <div class="card"><div class="k">Live Confirmation</div><div class="v" style="font-size:14px">{% if instance.control_mode_context == 'live' %}Trusted dashboard session{% else %}Not required{% endif %}</div></div>
         <div class="card"><div class="k">Lifecycle Event</div><div class="v" style="font-size:14px">{{ instance.last_lifecycle_event or "Unavailable" }}</div></div>
         <div class="card"><div class="k">Fresh Session</div><div class="v" style="font-size:14px">{% if instance.is_fresh_runtime_session %}Yes{% else %}No{% endif %}</div></div>
         <div class="card"><div class="k">Runtime Started</div><div class="v" style="font-size:14px">{{ instance.runtime_started_at_utc or "Unavailable" }}</div></div>

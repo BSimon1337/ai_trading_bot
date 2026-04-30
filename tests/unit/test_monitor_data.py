@@ -16,7 +16,9 @@ from tests.fixtures.monitor.build_fixtures import (
 )
 from tradingbot.app.monitor import (
     DEFAULT_HEADLINE_PREVIEW_LIMIT,
+    VALUE_SOURCE_FILL_DELTA,
     VALUE_SOURCE_SNAPSHOT_DELTA,
+    _normalize_snapshot_frame,
     _filter_active_evidence,
     _headline_evidence_preview,
     _select_authoritative_account_instance,
@@ -80,6 +82,26 @@ def test_safe_read_csv_returns_empty_frame_and_issue_for_malformed_file(tmp_path
     assert result.issue.category == "malformed_csv"
 
 
+def test_safe_read_csv_recovers_rows_from_mixed_schema_file_when_possible(tmp_path):
+    path = tmp_path / "mixed.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,quantity,portfolio_value,cash,reason,result",
+                "2026-04-30T00:00:00+00:00,live,SPY,stock,hold,model,0,100,100,hold,skipped",
+                "2026-04-30T00:01:00+00:00,live,SPY,stock,hold,model,,,,,,,,extra",
+                "2026-04-30T00:02:00+00:00,live,SPY,stock,hold,model,0,101,100,hold,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = safe_read_csv(path, source="decisions")
+
+    assert result.issue is None
+    assert len(result.dataframe) == 2
+
+
 def test_safe_read_csv_reads_valid_decision_file(tmp_path):
     path = write_decisions(tmp_path / "decisions.csv", [recent_decision(symbol="BTC/USD")])
 
@@ -100,6 +122,20 @@ def test_normalize_timestamps_sorts_rows_by_timestamp():
     normalized = normalize_timestamps(frame)
 
     assert list(normalized["symbol"]) == ["ETH/USD", "BTC/USD"]
+
+
+def test_normalize_snapshot_frame_parses_mixed_date_and_timestamp_values():
+    frame = pd.DataFrame(
+        [
+            {"date": "2026-04-25", "symbol": "BTC/USD", "portfolio_value": "99.93", "cash": "25.97", "position_qty": "0.000193", "day_pnl": "0.0"},
+            {"date": "2026-04-29T20:56:00.159465-04:00", "symbol": "BTC/USD", "portfolio_value": "99.14", "cash": "59.915432", "position_qty": "0.00026", "day_pnl": "0.0"},
+        ]
+    )
+
+    normalized = _normalize_snapshot_frame(frame)
+
+    assert normalized["timestamp"].notna().all()
+    assert normalized.iloc[-1]["portfolio_value"] == "99.14"
 
 
 def test_numeric_helpers_use_defaults_for_bad_values():
@@ -365,7 +401,7 @@ def test_dashboard_status_includes_control_availability_fields_per_instance(tmp_
     assert running_item["can_start"] is False
     assert running_item["can_stop"] is True
     assert running_item["can_restart"] is True
-    assert running_item["requires_live_confirmation"] is True
+    assert running_item["requires_live_confirmation"] is False
 
     assert stopped_item["control_asset_class"] == "stock"
     assert stopped_item["control_mode_context"] == "paper"
@@ -415,8 +451,38 @@ def test_dashboard_status_includes_live_and_paper_control_confirmation_messages(
     live_item = next(item for item in payload["instances"] if item["label"] == "BTC/USD")
     paper_item = next(item for item in payload["instances"] if item["label"] == "SPY")
 
-    assert live_item["control_confirmation_hint"] == "Enter CONFIRM before live start or restart."
-    assert paper_item["control_confirmation_hint"] == "Paper controls do not require live confirmation."
+    assert live_item["control_confirmation_hint"] == "Live controls use this trusted local dashboard session."
+    assert paper_item["control_confirmation_hint"] == "Live controls use this trusted local dashboard session."
+
+
+def test_dashboard_status_prefers_monitor_mode_for_stopped_runtime_controls(tmp_path):
+    paper_paths = create_monitor_fixture(tmp_path / "paper", "healthy", symbol="SPY")
+    config = make_bot_config(
+        paper=False,
+        live_trading_enabled=True,
+        symbols=("SPY",),
+    )
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="SPY",
+                symbols=("SPY",),
+                asset_classes=("stock",),
+                decision_log_path=paper_paths["decisions"],
+                fill_log_path=paper_paths["fills"],
+                snapshot_log_path=paper_paths["snapshot"],
+                runtime_state="stopped",
+                runtime_mode_context="paper",
+            ),
+        ),
+        config=config,
+    )
+
+    item = payload["instances"][0]
+
+    assert item["control_mode_context"] == "live"
+    assert item["control_confirmation_hint"] == "Live controls use this trusted local dashboard session."
 
 
 def test_dashboard_status_includes_recent_control_actions_from_runtime_registry(tmp_path, monkeypatch):
@@ -1045,6 +1111,77 @@ def test_dashboard_status_uses_snapshot_delta_held_value_without_recent_fill(tmp
     assert item["held_value"] == 20.0
     assert item["held_value_estimate"] == 20.0
     assert item["latest_fill_price"] == 10.0
+
+
+def test_dashboard_status_uses_provisional_fill_state_when_fill_is_newer_than_snapshot(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    Path(paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                "2026-04-30T17:45:00+00:00,live,ETH/USD,99.10,59.91,0.0,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(paths["fills"]).write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result",
+                "2026-04-30T17:45:16+00:00,live,ETH/USD,crypto,buy,0.00702909,order-1,99.10,63.414264,15.855736,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["position_qty"] == 0.00702909
+    assert item["cash"] == 63.414264
+    assert item["held_value_source"] == VALUE_SOURCE_FILL_DELTA
+    assert item["portfolio_is_provisional"] is True
+
+
+def test_dashboard_status_prefers_live_badge_for_running_managed_stock_runtime_without_trade_rows(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "spy", "no_data", symbol="SPY")
+    Path(paths["decisions"]).write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
+                "2026-04-30T17:43:51+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="SPY",
+        symbols=("SPY",),
+        asset_classes=("stock",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+    )
+
+    summary = summarize_instance(instance)
+    payload = dashboard_status((summary,))
+    item = payload["instances"][0]
+
+    assert summary.status.state == "live"
+    assert item["status_state"] == "live"
+    assert item["latest_mode"] == "active-live"
 
 
 def test_dashboard_status_prefers_current_healthy_restart_over_old_failed_evidence(tmp_path):

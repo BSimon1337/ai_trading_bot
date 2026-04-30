@@ -26,6 +26,7 @@ def main() -> int:
             config=bot_config,
             recent_control_actions=monitor_config.recent_control_actions,
             refresh_seconds=monitor_config.refresh_seconds,
+            refresh_runtime_state=True,
         )
     except TypeError:
         app = create_app(

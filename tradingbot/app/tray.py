@@ -12,6 +12,7 @@ from tradingbot.app.monitor import (
     dashboard_status,
     load_monitor_configuration,
 )
+from tradingbot.config.settings import load_config
 
 
 TRAY_MENU_ACTIONS = ("Open Dashboard", "Refresh Status", "Exit Monitor")
@@ -297,8 +298,17 @@ def _config_with_overrides(
         refresh_seconds=refresh_seconds or config.refresh_seconds,
         tray_enabled=config.tray_enabled if tray_enabled is None else tray_enabled,
         read_only=read_only,
+        runtime_registry_path=config.runtime_registry_path,
+        recent_control_actions=config.recent_control_actions,
         instances=config.instances,
     )
+
+
+def _safe_bot_config():
+    try:
+        return load_config()
+    except Exception:
+        return None
 
 
 def run_dashboard_only(
@@ -306,7 +316,17 @@ def run_dashboard_only(
     *,
     app_factory: Callable[..., Any] = create_app,
 ) -> Any:
-    app = app_factory(instances=config.instances, refresh_seconds=config.refresh_seconds)
+    bot_config = _safe_bot_config()
+    try:
+        app = app_factory(
+            instances=config.instances,
+            config=bot_config,
+            recent_control_actions=config.recent_control_actions,
+            refresh_seconds=config.refresh_seconds,
+            refresh_runtime_state=True,
+        )
+    except TypeError:
+        app = app_factory(instances=config.instances, refresh_seconds=config.refresh_seconds)
     app.run(host=config.dashboard_host, port=config.dashboard_port, debug=False, use_reloader=False)
     return app
 
@@ -319,7 +339,8 @@ def run_monitor(
     tray_launcher: Callable[..., tuple[TrayController, dict[str, Any]]] = start_monitor_tray,
 ) -> int:
     args = parse_args(argv)
-    base_config = config or load_monitor_configuration()
+    bot_config = _safe_bot_config()
+    base_config = config or load_monitor_configuration(config=bot_config)
     runtime_config = _config_with_overrides(
         base_config,
         host=args.host,
@@ -334,7 +355,16 @@ def run_monitor(
         return 0
 
     tray_launcher(config=runtime_config)
-    app = app_factory(instances=runtime_config.instances, refresh_seconds=runtime_config.refresh_seconds)
+    try:
+        app = app_factory(
+            instances=runtime_config.instances,
+            config=bot_config,
+            recent_control_actions=runtime_config.recent_control_actions,
+            refresh_seconds=runtime_config.refresh_seconds,
+            refresh_runtime_state=True,
+        )
+    except TypeError:
+        app = app_factory(instances=runtime_config.instances, refresh_seconds=runtime_config.refresh_seconds)
     app.run(host=runtime_config.dashboard_host, port=runtime_config.dashboard_port, debug=False, use_reloader=False)
     return 0
 

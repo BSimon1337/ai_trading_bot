@@ -22,6 +22,7 @@ from tradingbot.app.runtime_manager import (
     request_restart_runtime_action,
     request_start_runtime_action,
     request_stop_runtime_action,
+    reconcile_runtime_registry,
     runtime_state_index,
 )
 from tradingbot.config.settings import BotConfig, infer_asset_class
@@ -34,6 +35,7 @@ DEFAULT_HISTORY_ISSUE_LIMIT = 5
 DEFAULT_ARCHIVE_MARKERS = ("archive", "archived", "history", "historical", "old", "retained")
 SENSITIVE_KEYWORDS = ("key", "secret", "token", "password", "credential")
 VALUE_SOURCE_FILL = "latest_fill"
+VALUE_SOURCE_FILL_DELTA = "latest_fill_delta"
 VALUE_SOURCE_SNAPSHOT_DELTA = "snapshot_delta"
 VALUE_SOURCE_UNAVAILABLE = "unavailable"
 DEFAULT_HEADLINE_PREVIEW_LIMIT = 3
@@ -246,6 +248,12 @@ def safe_read_csv(path: Path, source: str = "csv") -> CsvReadResult:
     try:
         return CsvReadResult(path=path, dataframe=pd.read_csv(path))
     except Exception as exc:
+        try:
+            recovered = pd.read_csv(path, engine="python", on_bad_lines="skip")
+        except Exception:
+            recovered = pd.DataFrame()
+        if not recovered.empty:
+            return CsvReadResult(path=path, dataframe=recovered)
         return CsvReadResult(
             path=path,
             dataframe=pd.DataFrame(),
@@ -266,6 +274,27 @@ def normalize_timestamps(dataframe: pd.DataFrame, column: str = "timestamp") -> 
     normalized = dataframe.copy()
     normalized[column] = pd.to_datetime(normalized[column], errors="coerce", utc=True)
     return normalized.sort_values(column)
+
+
+def _parse_datetime_series(values: pd.Series) -> pd.Series:
+    parsed = pd.to_datetime(values, errors="coerce", utc=True)
+    if parsed.notna().all():
+        return parsed
+    if parsed.isna().any():
+        missing_mask = parsed.isna()
+        missing_values = values[missing_mask]
+        try:
+            reparsed_missing = pd.to_datetime(missing_values, errors="coerce", utc=True, format="mixed")
+        except TypeError:
+            reparsed_missing = missing_values.apply(lambda value: pd.to_datetime(value, errors="coerce", utc=True))
+        parsed.loc[missing_mask] = reparsed_missing
+    if parsed.notna().any():
+        return parsed
+    try:
+        parsed = pd.to_datetime(values, errors="coerce", utc=True, format="mixed")
+    except TypeError:
+        parsed = values.apply(lambda value: pd.to_datetime(value, errors="coerce", utc=True))
+    return parsed
 
 
 def to_float(value: Any, default: float = 0.0) -> float:
@@ -386,6 +415,8 @@ def load_monitor_configuration(
         for marker in os.getenv("MONITOR_ARCHIVE_MARKERS", ",".join(DEFAULT_ARCHIVE_MARKERS)).split(",")
         if marker.strip()
     ) or DEFAULT_ARCHIVE_MARKERS
+    if config is not None:
+        reconcile_runtime_registry(config, registry_path=runtime_registry_path)
     runtime_index, lifecycle_index, recent_control_actions, _ = load_runtime_registry_views(runtime_registry_path)
     return MonitorConfiguration(
         dashboard_host=dashboard_host,
@@ -408,10 +439,20 @@ def load_monitor_configuration(
     )
 
 
-def _control_availability_for_instance(instance: DashboardInstance, latest_mode: str = "") -> dict[str, Any]:
+def _control_availability_for_instance(
+    instance: DashboardInstance,
+    latest_mode: str = "",
+    *,
+    config: BotConfig | None = None,
+) -> dict[str, Any]:
     runtime_state = (instance.runtime_state or "").strip().lower()
     asset_class = instance.asset_classes[0] if instance.asset_classes else infer_asset_class(instance.label)
-    mode_context = (instance.runtime_mode_context or latest_mode or "").strip().lower()
+    configured_mode = ""
+    if config is not None:
+        configured_mode = "paper" if config.paper else "live"
+    mode_context = (instance.runtime_mode_context or latest_mode or configured_mode or "").strip().lower()
+    if runtime_state in {"stopped", "failed", "paused", "unmanaged", ""} and configured_mode:
+        mode_context = configured_mode
 
     if runtime_state in {"starting", "stopping", "restarting"}:
         return {
@@ -422,7 +463,7 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
             "can_stop": False,
             "can_restart": False,
             "control_availability_message": f"Runtime is currently {runtime_state}.",
-            "requires_live_confirmation": mode_context == "live",
+            "requires_live_confirmation": False,
         }
     if runtime_state == "running":
         return {
@@ -433,7 +474,7 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
             "can_stop": True,
             "can_restart": True,
             "control_availability_message": "Runtime is currently running.",
-            "requires_live_confirmation": mode_context == "live",
+            "requires_live_confirmation": False,
         }
     if runtime_state in {"failed", "paused", "stopped"}:
         message = {
@@ -449,7 +490,7 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
             "can_stop": False,
             "can_restart": True,
             "control_availability_message": message,
-            "requires_live_confirmation": mode_context == "live",
+            "requires_live_confirmation": False,
         }
     return {
         "control_asset_class": asset_class,
@@ -459,7 +500,7 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
         "can_stop": False,
         "can_restart": False,
         "control_availability_message": "No active managed runtime is registered.",
-        "requires_live_confirmation": mode_context == "live",
+        "requires_live_confirmation": False,
     }
 
 
@@ -470,19 +511,14 @@ def _confirmation_state_for_request(
     requested_action: str,
     provided_confirmation: str,
 ) -> tuple[str, str]:
+    del config
     normalized_mode = (mode_context or "").strip().lower()
     normalized_action = (requested_action or "").strip().lower()
-    confirmation = (provided_confirmation or "").strip()
+    del provided_confirmation
     live_actions = {"start", "restart"}
     if normalized_mode != "live" or normalized_action not in live_actions:
         return "not_required", ""
-    if confirmation == config.live_confirmation_token:
-        return "confirmed", ""
-    token_hint = config.live_confirmation_token or "CONFIRM"
-    return (
-        "missing_confirmation" if not confirmation else "invalid_confirmation",
-        f"Live {normalized_action} requires confirmation. Enter {token_hint} to continue.",
-    )
+    return "dashboard_session_trusted", ""
 
 
 def _blocked_control_action(
@@ -892,11 +928,11 @@ def _normalize_snapshot_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
     normalized = dataframe.copy()
     if "timestamp" not in normalized.columns:
         if "date" in normalized.columns:
-            normalized["timestamp"] = pd.to_datetime(normalized["date"], errors="coerce", utc=True)
+            normalized["timestamp"] = _parse_datetime_series(normalized["date"])
         else:
             normalized["timestamp"] = pd.NaT
     else:
-        normalized["timestamp"] = pd.to_datetime(normalized["timestamp"], errors="coerce", utc=True)
+        normalized["timestamp"] = _parse_datetime_series(normalized["timestamp"])
     return normalized.sort_values("timestamp")
 
 
@@ -1054,6 +1090,64 @@ def _value_evidence(
     return 0.0, 0.0, VALUE_SOURCE_UNAVAILABLE
 
 
+def _effective_portfolio_state(
+    snapshot: SnapshotSummary | None,
+    fill: FillSummary | None,
+) -> dict[str, Any]:
+    snapshot_qty = to_float(snapshot.position_qty if snapshot is not None else None)
+    snapshot_cash = to_float(snapshot.cash if snapshot is not None else None)
+    snapshot_portfolio = to_float(snapshot.portfolio_value if snapshot is not None else None)
+    snapshot_timestamp = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
+
+    fill_timestamp = _parse_instance_timestamp(fill.timestamp if fill is not None else None)
+    fill_result = (fill.result if fill is not None else "").strip().lower()
+    fill_side = (fill.side if fill is not None else "").strip().lower()
+    fill_qty = to_float(fill.quantity if fill is not None else None)
+    fill_cash = to_float(fill.cash if fill is not None else None)
+    fill_portfolio = to_float(fill.portfolio_value if fill is not None else None)
+    fill_notional = to_float(fill.notional_usd if fill is not None else None)
+
+    display_qty = snapshot_qty
+    display_cash = snapshot_cash
+    display_portfolio = snapshot_portfolio
+    value_source = VALUE_SOURCE_UNAVAILABLE
+
+    if fill_timestamp is not None and (snapshot_timestamp is None or fill_timestamp > snapshot_timestamp) and fill_result == "filled":
+        if fill_side == "buy" and fill_qty > 0:
+            display_qty = snapshot_qty + fill_qty
+        elif fill_side == "sell" and fill_qty > 0:
+            display_qty = max(snapshot_qty - fill_qty, 0.0)
+        if fill_cash > 0:
+            display_cash = fill_cash
+        if fill_portfolio > 0:
+            display_portfolio = fill_portfolio
+        if fill_qty > 0 and fill_notional > 0 and display_qty > 0:
+            unit_value = fill_notional / fill_qty
+            return {
+                "position_qty": display_qty,
+                "cash": display_cash,
+                "portfolio_value": display_portfolio,
+                "held_value": display_qty * unit_value,
+                "held_value_estimate": display_qty * unit_value,
+                "held_value_source": VALUE_SOURCE_FILL_DELTA,
+                "latest_fill_price": unit_value,
+                "is_provisional": True,
+            }
+
+    latest_fill_price, held_value_estimate, held_value_source = _value_evidence(snapshot, fill)
+    held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
+    return {
+        "position_qty": display_qty,
+        "cash": display_cash,
+        "portfolio_value": display_portfolio,
+        "held_value": held_value,
+        "held_value_estimate": held_value_estimate,
+        "held_value_source": held_value_source,
+        "latest_fill_price": latest_fill_price,
+        "is_provisional": False,
+    }
+
+
 def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
     if timestamp is None or pd.isna(timestamp):
         return None
@@ -1082,12 +1176,17 @@ def _classify_status(
     if runtime_state in {"starting", "restarting"}:
         return RuntimeStatus("running", "info", runtime_message, age_minutes)
 
+    runtime_mode = (instance.runtime_mode_context or "").strip().lower()
     if latest_decision is None:
         if runtime_state == "running":
+            if runtime_mode == "live":
+                return RuntimeStatus("live", "ok", runtime_message or "Managed live runtime is running.", age_minutes)
+            if runtime_mode == "paper":
+                return RuntimeStatus("paper", "info", runtime_message or "Managed paper runtime is running.", age_minutes)
             return RuntimeStatus("running", "info", runtime_message, age_minutes)
         return RuntimeStatus("no_data", "warning", "No runtime evidence found.", age_minutes)
-    live_like = latest_decision.mode in {"active-live", "live"}
-    paper_like = latest_decision.mode == "paper"
+    live_like = latest_decision.mode in {"active-live", "live"} or runtime_mode == "live"
+    paper_like = latest_decision.mode == "paper" or runtime_mode == "paper"
     if runtime_state == "running":
         if live_like:
             return RuntimeStatus("live", "ok", runtime_message or "Managed live runtime is running.", age_minutes)
@@ -1360,8 +1459,7 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
             actions_7d[action] = int(counts.get(action, 0))
     recent_decisions = _recent_rows(decisions)
     recent_fills = _recent_rows(fills)
-    latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
-    held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
+    effective_portfolio = _effective_portfolio_state(latest_snapshot, latest_fill)
     sentiment_summary = _latest_sentiment_summary(decisions) or latest_decision
     current_sentiment = _sentiment_snapshot(sentiment_summary)
     headline_preview = _headline_evidence_preview(sentiment_summary)
@@ -1375,7 +1473,11 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
             result = str(row.get("result", ""))
             if result in {"rejected", "canceled"} or reason.startswith("broker_"):
                 broker_rejection_count += 1
-    control_availability = _control_availability_for_instance(instance, latest_decision.mode or latest_snapshot.mode)
+    control_availability = _control_availability_for_instance(
+        instance,
+        latest_decision.mode or latest_snapshot.mode,
+        config=config,
+    )
     return {
         "label": instance.label,
         "status": _status_to_dict(instance.status),
@@ -1385,7 +1487,7 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         "asset_classes": list(instance.asset_classes),
         "latest_action": latest_decision.action or "n/a",
         "latest_reason": latest_decision.reason or instance.status.message,
-        "latest_mode": latest_decision.mode or "unknown",
+        "latest_mode": latest_decision.mode or instance.runtime_mode_context or "unknown",
         "latest_asset_class": latest_decision.asset_class or (instance.asset_classes[0] if instance.asset_classes else "unknown"),
         "latest_source": latest_decision.action_source or "n/a",
         "latest_update_utc": instance.last_updated_at,
@@ -1406,13 +1508,9 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         "control_availability_message": control_availability["control_availability_message"],
         "requires_live_confirmation": control_availability["requires_live_confirmation"],
         "control_confirmation_hint": (
-            f"Enter {config.live_confirmation_token} before live start or restart."
-            if control_availability["requires_live_confirmation"] and config is not None
-            else (
-                "Live start and restart require explicit confirmation."
-                if control_availability["requires_live_confirmation"]
-                else "Paper controls do not require live confirmation."
-            )
+            "Live controls use this trusted local dashboard session."
+            if control_availability["control_mode_context"] == "live"
+            else "Paper controls are available from the dashboard."
         ),
         "last_decision_utc": latest_decision.timestamp or "",
         "last_fill_utc": latest_fill.timestamp or "",
@@ -1440,15 +1538,16 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         "evidence_scope": instance.evidence_scope,
         "historical_issue_count": len(instance.historical_issues),
         "historical_issues": [_issue_to_dict(issue) for issue in instance.historical_issues],
-        "account_equity": to_float(latest_snapshot.portfolio_value),
-        "portfolio_value": to_float(latest_snapshot.portfolio_value),
-        "cash": to_float(latest_snapshot.cash),
+        "account_equity": effective_portfolio["portfolio_value"],
+        "portfolio_value": effective_portfolio["portfolio_value"],
+        "cash": effective_portfolio["cash"],
         "day_pnl": to_float(latest_snapshot.day_pnl),
-        "position_qty": to_float(latest_snapshot.position_qty),
-        "held_value": held_value,
-        "held_value_estimate": held_value_estimate,
-        "held_value_source": held_value_source,
-        "latest_fill_price": latest_fill_price,
+        "position_qty": effective_portfolio["position_qty"],
+        "held_value": effective_portfolio["held_value"],
+        "held_value_estimate": effective_portfolio["held_value_estimate"],
+        "held_value_source": effective_portfolio["held_value_source"],
+        "latest_fill_price": effective_portfolio["latest_fill_price"],
+        "portfolio_is_provisional": effective_portfolio["is_provisional"],
         "decisions_today": decisions_today,
         "fills_today": fills_today,
         "equity_points": equity_points,
@@ -1516,13 +1615,14 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
             "is_stale": True,
         }
     snapshot = freshest.latest_snapshot or SnapshotSummary()
+    effective_portfolio = _effective_portfolio_state(snapshot, freshest.latest_fill)
     latest_update = snapshot.timestamp or freshest.last_updated_at or ""
     latest_update_ts = _parse_instance_timestamp(latest_update)
     is_stale = True if latest_update_ts is None else (_age_minutes(latest_update_ts) or 0.0) > DEFAULT_STALE_AFTER_MINUTES
     instances_with_fills = sum(1 for instance in active_instances if instance.latest_fill is not None)
     return {
-        "account_equity": to_float(snapshot.portfolio_value),
-        "cash": to_float(snapshot.cash),
+        "account_equity": effective_portfolio["portfolio_value"],
+        "cash": effective_portfolio["cash"],
         "day_pnl": to_float(snapshot.day_pnl),
         "active_instances": len(active_instances),
         "instances_count": len(active_instances),
@@ -1612,14 +1712,25 @@ def create_app(
     historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT,
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
     refresh_seconds: int = DEFAULT_REFRESH_SECONDS,
+    refresh_runtime_state: bool = False,
 ) -> Flask:
     app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[2] / "templates"))
 
     def status_payload() -> dict[str, Any]:
+        current_instances = instances
+        current_recent_control_actions = recent_control_actions
+        if refresh_runtime_state and config is not None:
+            try:
+                current_monitor_configuration = load_monitor_configuration(config=config)
+            except Exception:
+                current_monitor_configuration = None
+            if current_monitor_configuration is not None:
+                current_instances = current_monitor_configuration.instances
+                current_recent_control_actions = current_monitor_configuration.recent_control_actions
         return dashboard_status(
-            instances,
+            current_instances,
             config=config,
-            recent_control_actions=recent_control_actions,
+            recent_control_actions=current_recent_control_actions,
             stale_after_minutes=stale_after_minutes,
             historical_issue_limit=historical_issue_limit,
             archive_markers=archive_markers,

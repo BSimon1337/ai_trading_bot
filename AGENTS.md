@@ -1,6 +1,6 @@
 ﻿# ai_trading_bot Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-28
+Auto-generated from all feature plans. Last updated: 2026-04-30
 
 ## Active Technologies
 - Python 3.10 + Existing pinned runtime stack in `requirements.txt` / `pyproject.toml`: Lumibot, Alpaca integration via Lumibot and `alpaca-py`, pandas, numpy, scipy, yfinance, joblib, python-dotenv, Flask, pytest (004-preflight-offline-mode)
@@ -14,6 +14,7 @@ Auto-generated from all feature plans. Last updated: 2026-04-28
 - Existing CSV runtime evidence plus a local runtime-registry JSON/state file for managed process lifecycle metadata (008-runtime-manager)
 - Python 3.10 + Existing Flask, pandas, python-dotenv, Lumibot runtime stack, pystray, Pillow, pytest, and the current runtime-manager standard-library stack; no new third-party dependency planned (009-interactive-bot-controls)
 - Existing symbol-scoped CSV runtime evidence plus the local runtime-registry JSON extended with recent control activity metadata (009-interactive-bot-controls)
+- Existing symbol-scoped CSV runtime evidence plus the local runtime-registry JSON; observability summaries remain derived views rather than new durable storage systems (010-monitor-runtime-observability)
 
 - Python 3.10 + Lumibot, Alpaca integration via Lumibot broker support, pandas, joblib, python-dotenv, pytest (002-modular-trading-bot)
 
@@ -33,9 +34,9 @@ cd src; pytest; ruff check .
 Python 3.10: Follow standard conventions
 
 ## Recent Changes
+- 010-monitor-runtime-observability: Added Python 3.10 + Existing Flask, pandas, python-dotenv, Lumibot runtime stack, pystray, Pillow, pytest, and the current runtime-manager standard-library stack; no new third-party dependency planned
 - 009-interactive-bot-controls: Added Python 3.10 + Existing Flask, pandas, python-dotenv, Lumibot runtime stack, pystray, Pillow, pytest, and the current runtime-manager standard-library stack; no new third-party dependency planned
 - 008-runtime-manager: Added Python 3.10 + Existing Python runtime stack plus standard-library `subprocess`, `threading`, `json`, `pathlib`, and `dataclasses`; no new third-party dependency planned
-- 007-sentiment-observability: Added Python 3.10 + Existing Flask, pandas, python-dotenv, Lumibot runtime stack, local FinBERT path through `transformers` and `torch`, pytest
 
 
 <!-- MANUAL ADDITIONS START -->

@@ -5,7 +5,7 @@ import os
 import signal
 import subprocess
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,22 @@ from tradingbot.execution.safeguards import RuntimeGuardrailError, resolve_runti
 RUNTIME_REGISTRY_VERSION = 1
 DEFAULT_RECENT_SESSIONS_LIMIT = 25
 DEFAULT_RECENT_CONTROL_ACTIONS_LIMIT = 25
+MANAGED_RUNTIME_ENV_KEYS = (
+    "SYMBOL",
+    "SYMBOLS",
+    "CRYPTO_SYMBOLS",
+    "ALPACA_CRYPTO_UNIVERSE",
+    "DECISION_LOG_PATH",
+    "FILL_LOG_PATH",
+    "DAILY_SNAPSHOT_PATH",
+    "RUNTIME_REGISTRY_PATH",
+    "PAPER_TRADING",
+    "LIVE_TRADING_ENABLED",
+    "ALLOW_LIVE_TRADING",
+    "BASE_URL",
+    "LIVE_RUN_CONFIRMATION",
+    "LIVE_CONFIRMATION_TOKEN",
+)
 
 
 def utc_now_iso() -> str:
@@ -193,7 +209,49 @@ def create_runtime_session_id(symbol: str) -> str:
 
 
 def _terminate_process(pid: int) -> None:
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return
+        stderr = (completed.stderr or "").strip()
+        stdout = (completed.stdout or "").strip()
+        message = stderr or stdout
+        lowered = message.lower()
+        if "not found" in lowered or "no running instance" in lowered or "process" in lowered and "not found" in lowered:
+            raise ProcessLookupError(message or f"Process {pid} was not found.")
+        raise OSError(message or f"taskkill failed for process {pid} with exit code {completed.returncode}")
     os.kill(pid, signal.SIGTERM)
+
+
+def _is_process_running(pid: int | None) -> bool:
+    if pid is None or pid <= 0:
+        return False
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return False
+        output = (completed.stdout or "").strip()
+        if not output:
+            return False
+        lowered = output.lower()
+        if "no tasks are running" in lowered or "info:" in lowered:
+            return False
+        return str(pid) in output
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def _runtime_from_dict(value: dict[str, Any]) -> ManagedRuntime:
@@ -419,22 +477,27 @@ def build_symbol_runtime_config(config: BotConfig, symbol: str) -> BotConfig:
 def build_runtime_launch_command(
     *,
     python_executable: str | None = None,
-    mode: str = "live",
 ) -> tuple[str, ...]:
     return (
         python_executable or sys.executable,
         "-m",
         "tradingbot.app.main",
         "--mode",
-        mode,
+        "live",
     )
 
 
 def build_runtime_launch_env(
     config: BotConfig,
     symbol: str,
+    *,
+    mode: str | None = None,
 ) -> tuple[dict[str, str], dict[str, str], RuntimeLogScope]:
     symbol_config = build_symbol_runtime_config(config, symbol)
+    requested_mode = _requested_mode_context(mode, config)
+    live_confirmation = symbol_config.live_run_confirmation
+    if requested_mode == "live" and not live_confirmation:
+        live_confirmation = symbol_config.live_confirmation_token
     log_scope = RuntimeLogScope(
         decision_log_path=symbol_config.decision_log_path,
         fill_log_path=symbol_config.fill_log_path,
@@ -449,13 +512,120 @@ def build_runtime_launch_env(
         "FILL_LOG_PATH": log_scope.fill_log_path,
         "DAILY_SNAPSHOT_PATH": log_scope.snapshot_log_path,
         "RUNTIME_REGISTRY_PATH": config.runtime_registry_path,
+        "PAPER_TRADING": "1" if requested_mode == "paper" else "0",
+        "LIVE_TRADING_ENABLED": "0" if requested_mode == "paper" else "1",
+        "ALLOW_LIVE_TRADING": "0" if requested_mode == "paper" else "1",
+        "BASE_URL": "https://paper-api.alpaca.markets"
+        if requested_mode == "paper"
+        else "https://api.alpaca.markets",
+        "LIVE_RUN_CONFIRMATION": "" if requested_mode == "paper" else live_confirmation,
+        "LIVE_CONFIRMATION_TOKEN": symbol_config.live_confirmation_token,
     }
     if infer_asset_class(symbol) == "crypto":
         launch_env_scope["SYMBOL"] = symbol
         launch_env_scope["SYMBOLS"] = symbol
     environment = os.environ.copy()
+    for key in MANAGED_RUNTIME_ENV_KEYS:
+        environment.pop(key, None)
     environment.update(launch_env_scope)
     return environment, launch_env_scope, log_scope
+
+
+def _effective_runtime_action_config(
+    config: BotConfig,
+    *,
+    mode_context: str,
+    requested_from: str,
+    confirmation_state: str,
+) -> BotConfig:
+    if (
+        requested_from == "dashboard"
+        and mode_context == "live"
+        and confirmation_state in {"confirmed", "dashboard_session_trusted"}
+        and config.live_run_confirmation != config.live_confirmation_token
+    ):
+        return replace(config, live_run_confirmation=config.live_confirmation_token)
+    return config
+
+
+def reconcile_runtime_registry(
+    config: BotConfig,
+    *,
+    registry_path: Path | None = None,
+    process_is_running: Any | None = None,
+) -> RuntimeRegistry:
+    registry_file = Path(registry_path or config.runtime_registry_path)
+    process_is_running = _is_process_running if process_is_running is None else process_is_running
+    registry = load_runtime_registry(registry_file)
+    changed = False
+    for runtime in registry.managed_runtimes:
+        if runtime.lifecycle_state not in {"starting", "running", "restarting", "stopping"}:
+            continue
+        if runtime.pid is None or process_is_running(runtime.pid):
+            continue
+
+        changed = True
+        ended_at = utc_now_iso()
+        session = current_session_for_runtime(registry, runtime)
+        if runtime.lifecycle_state == "stopping":
+            reconciled_runtime = ManagedRuntime(
+                **{
+                    **runtime.__dict__,
+                    "lifecycle_state": "stopped",
+                    "pid": None,
+                    "last_seen_utc": ended_at,
+                    "last_exit_code": 0,
+                    "failure_reason": "",
+                }
+            )
+            event_type = "stopped"
+            event_message = "Runtime process was already stopped."
+            end_reason = "process_already_stopped"
+            exit_code = 0
+        else:
+            reconciled_runtime = ManagedRuntime(
+                **{
+                    **runtime.__dict__,
+                    "lifecycle_state": "failed",
+                    "pid": None,
+                    "last_seen_utc": ended_at,
+                    "failure_reason": "Runtime process exited unexpectedly.",
+                }
+            )
+            event_type = "failed"
+            event_message = "Runtime process exited unexpectedly."
+            end_reason = "process_exit_detected"
+            exit_code = None
+
+        registry = register_managed_runtime(
+            registry,
+            reconciled_runtime,
+            event=LifecycleEvent(
+                timestamp_utc=ended_at,
+                symbol=runtime.symbol,
+                session_id=runtime.session_id,
+                event_type=event_type,
+                message=event_message,
+                source="runtime_manager",
+            ),
+        )
+        if session is not None and not session.ended_at_utc:
+            registry = add_runtime_session(
+                registry,
+                RuntimeSession(
+                    **{
+                        **session.__dict__,
+                        "ended_at_utc": ended_at,
+                        "exit_code": exit_code,
+                        "end_reason": end_reason,
+                    }
+                ),
+                recent_limit=config.runtime_recent_sessions_limit,
+            )
+
+    if changed:
+        save_runtime_registry(registry_file, registry)
+    return registry
 
 
 def start_managed_runtime(
@@ -476,8 +646,8 @@ def start_managed_runtime(
     try:
         runtime_state = resolve_runtime_state(config, mode)
     except RuntimeGuardrailError as exc:
-        command = build_runtime_launch_command(python_executable=python_executable, mode=mode)
-        environment, launch_env_scope, log_scope = build_runtime_launch_env(config, symbol)
+        command = build_runtime_launch_command(python_executable=python_executable)
+        environment, launch_env_scope, log_scope = build_runtime_launch_env(config, symbol, mode=mode)
         failed_session = RuntimeSession(
             session_id=session_id,
             symbol=symbol,
@@ -529,8 +699,8 @@ def start_managed_runtime(
         )
 
     actual_mode = runtime_state.execution_mode
-    command = build_runtime_launch_command(python_executable=python_executable, mode=mode)
-    environment, launch_env_scope, log_scope = build_runtime_launch_env(config, symbol)
+    command = build_runtime_launch_command(python_executable=python_executable)
+    environment, launch_env_scope, log_scope = build_runtime_launch_env(config, symbol, mode=mode)
 
     session = RuntimeSession(
         session_id=session_id,
@@ -942,9 +1112,18 @@ def request_start_runtime_action(
     confirmation_state: str = "not_required",
 ) -> ManagedControlAction:
     registry_file = Path(registry_path or config.runtime_registry_path)
-    current_runtime = current_runtime_for_symbol(load_runtime_registry(registry_file), symbol)
     mode_context = _requested_mode_context(mode, config)
-    if requested_from == "dashboard" and mode_context == "live" and confirmation_state != "confirmed":
+    effective_config = _effective_runtime_action_config(
+        config,
+        mode_context=mode_context,
+        requested_from=requested_from,
+        confirmation_state=confirmation_state,
+    )
+    current_runtime = current_runtime_for_symbol(
+        reconcile_runtime_registry(effective_config, registry_path=registry_file),
+        symbol,
+    )
+    if requested_from == "dashboard" and mode_context == "live" and confirmation_state not in {"confirmed", "dashboard_session_trusted"}:
         return _save_control_action(
             registry_file,
             config,
@@ -958,7 +1137,7 @@ def request_start_runtime_action(
                 requested_from=requested_from,
                 confirmation_state=confirmation_state,
                 outcome_state="blocked",
-                outcome_message=f"Live start requires confirmation. Enter {config.live_confirmation_token} to continue.",
+                outcome_message="Live start is not authorized for this dashboard request.",
                 runtime_session_id="" if current_runtime is None else current_runtime.session_id,
             ),
         )
@@ -982,7 +1161,7 @@ def request_start_runtime_action(
         )
 
     result = start_managed_runtime(
-        config,
+        effective_config,
         symbol,
         mode=mode_context,
         registry_path=registry_file,
@@ -1018,7 +1197,10 @@ def request_stop_runtime_action(
     requested_from: str = "dashboard",
 ) -> ManagedControlAction:
     registry_file = Path(registry_path or config.runtime_registry_path)
-    current_runtime = current_runtime_for_symbol(load_runtime_registry(registry_file), symbol)
+    current_runtime = current_runtime_for_symbol(
+        reconcile_runtime_registry(config, registry_path=registry_file),
+        symbol,
+    )
     mode_context = "paper" if config.paper else "live"
     if current_runtime is None or current_runtime.lifecycle_state == "stopped":
         return _save_control_action(
@@ -1078,9 +1260,18 @@ def request_restart_runtime_action(
     confirmation_state: str = "not_required",
 ) -> ManagedControlAction:
     registry_file = Path(registry_path or config.runtime_registry_path)
-    current_runtime = current_runtime_for_symbol(load_runtime_registry(registry_file), symbol)
     mode_context = _requested_mode_context(mode, config)
-    if requested_from == "dashboard" and mode_context == "live" and confirmation_state != "confirmed":
+    effective_config = _effective_runtime_action_config(
+        config,
+        mode_context=mode_context,
+        requested_from=requested_from,
+        confirmation_state=confirmation_state,
+    )
+    current_runtime = current_runtime_for_symbol(
+        reconcile_runtime_registry(effective_config, registry_path=registry_file),
+        symbol,
+    )
+    if requested_from == "dashboard" and mode_context == "live" and confirmation_state not in {"confirmed", "dashboard_session_trusted"}:
         return _save_control_action(
             registry_file,
             config,
@@ -1094,7 +1285,7 @@ def request_restart_runtime_action(
                 requested_from=requested_from,
                 confirmation_state=confirmation_state,
                 outcome_state="blocked",
-                outcome_message=f"Live restart requires confirmation. Enter {config.live_confirmation_token} to continue.",
+                outcome_message="Live restart is not authorized for this dashboard request.",
                 runtime_session_id="" if current_runtime is None else current_runtime.session_id,
             ),
         )
@@ -1118,7 +1309,7 @@ def request_restart_runtime_action(
         )
 
     result = restart_managed_runtime(
-        config,
+        effective_config,
         symbol,
         mode=mode_context,
         registry_path=registry_file,

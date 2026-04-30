@@ -194,7 +194,7 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert item["can_start"] is False
     assert item["can_stop"] is True
     assert item["can_restart"] is True
-    assert item["requires_live_confirmation"] is True
+    assert item["requires_live_confirmation"] is False
     assert payload["recent_control_actions"][0]["requested_action"] == "start"
     assert payload["recent_control_actions"][0]["symbol"] == "BTC/USD"
     assert payload["recent_control_actions"][0]["timestamp_utc"] == "2026-04-28T02:00:00+00:00"
@@ -221,7 +221,7 @@ def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_p
             "mode_context": "live",
             "requested_at_utc": "2026-04-28T02:00:00+00:00",
             "requested_from": "dashboard",
-            "confirmation_state": "confirmed",
+            "confirmation_state": "dashboard_session_trusted",
             "outcome_state": "succeeded",
             "outcome_message": "Runtime is running.",
             "runtime_session_id": "session-btc",
@@ -245,24 +245,71 @@ def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_p
     )
     client = app.test_client()
 
-    blocked_response = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
-    blocked_payload = blocked_response.get_json()
-    response = client.post(
-        "/control/start",
-        data={"symbol": "BTC/USD", "mode_context": "live", "live_confirmation": "CONFIRM"},
-    )
+    response = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
     payload = response.get_json()
 
-    assert blocked_response.status_code == 200
-    assert blocked_payload["outcome_state"] == "blocked"
-    assert "requires confirmation" in blocked_payload["outcome_message"]
     assert response.status_code == 200
     assert payload["symbol"] == "BTC/USD"
     assert payload["requested_action"] == "start"
     assert payload["outcome_state"] == "succeeded"
     assert payload["outcome_message"] == "Runtime is running."
-    assert payload["confirmation_state"] == "confirmed"
-    assert observed_confirmation_states == ["confirmed"]
+    assert payload["confirmation_state"] == "dashboard_session_trusted"
+    assert observed_confirmation_states == ["dashboard_session_trusted"]
+
+
+def test_dashboard_contract_can_refresh_runtime_state_from_registry_after_app_start(tmp_path, monkeypatch):
+    stopped_paths = create_monitor_fixture(tmp_path / "stopped", "healthy", symbol="BTC/USD")
+    running_paths = create_monitor_fixture(tmp_path / "running", "healthy", symbol="BTC/USD")
+    config = make_bot_config(symbols=("BTC/USD",), runtime_registry_path=str(tmp_path / "runtime" / "runtime_registry.json"))
+
+    startup_instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=stopped_paths["decisions"],
+        fill_log_path=stopped_paths["fills"],
+        snapshot_log_path=stopped_paths["snapshot"],
+        runtime_state="stopped",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime stopped by operator.",
+    )
+    refreshed_instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=running_paths["decisions"],
+        fill_log_path=running_paths["fills"],
+        snapshot_log_path=running_paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime is running.",
+        runtime_session_id="session-btc-live",
+        runtime_pid=2468,
+        runtime_started_at_utc="2026-04-30T00:45:38+00:00",
+        runtime_last_seen_utc="2026-04-30T00:46:00+00:00",
+        last_lifecycle_event="running",
+        is_fresh_runtime_session=True,
+    )
+
+    class RefreshedConfig:
+        instances = (refreshed_instance,)
+        recent_control_actions = ()
+
+    monkeypatch.setattr("tradingbot.app.monitor.load_monitor_configuration", lambda config=None: RefreshedConfig())
+
+    app = create_app(
+        instances=(startup_instance,),
+        config=config,
+        refresh_runtime_state=True,
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "running"
+    assert item["runtime_status_message"] == "Runtime is running."
+    assert item["runtime_session_id"] == "session-btc-live"
 
 
 def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path):

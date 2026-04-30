@@ -216,6 +216,13 @@ What it does not do yet:
 
 The next planned app layer after this is richer operator management on top of the current runtime controls, including settings and broader application workflow improvements, while continuing to support both stock and crypto symbols through one shared operator experience.
 
+The next monitor-focused refinement after interactive controls is runtime observability hardening. That work is intended to make the dashboard more trustworthy during startup and mixed-symbol activity by:
+
+- reconciling runtime truth against actual managed process state on every refresh
+- surfacing recent runtime milestones, warnings, and order-lifecycle progress directly in the dashboard
+- labeling provisional-versus-confirmed portfolio state explicitly
+- preventing one symbol's held value, cash state, or other portfolio evidence from leaking into another symbol's card after runtimes start
+
 Generated runtime evidence:
 
 - `logs/paper_validation*` contains local operator evidence and should stay out of commits unless you intentionally want to preserve example artifacts.
@@ -250,4 +257,23 @@ For package-style installs directly from GitHub:
 
 ```powershell
 python -m pip install "git+https://github.com/YOURNAME/ai_trading_bot.git@v0.1.0"
+```
+Quick monitor launcher:
+
+```powershell
+.\start_monitor.ps1
+```
+
+Double-click launcher:
+
+```text
+start_monitor.cmd
+```
+
+Optional examples:
+
+```powershell
+.\start_monitor.ps1 -Mode paper
+.\start_monitor.ps1 -Mode live -Symbols "SPY,BTC/USD,ETH/USD"
+.\start_monitor.ps1 -Tray
 ```
