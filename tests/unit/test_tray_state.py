@@ -230,3 +230,33 @@ def test_tray_state_mapping_uses_runtime_mode_context_when_control_mode_context_
 
     assert "Live controls: 1." in state.tooltip
     assert "Paper controls: 1." in state.tooltip
+
+
+def test_tray_state_mapping_includes_latest_active_warning_summary():
+    payload = {
+        "status_updated_utc": "2026-04-30 00:46:00 UTC",
+        "aggregate_state": "failed",
+        "instances": [
+            {
+                "label": "BTC/USD",
+                "runtime_state": "failed",
+                "runtime_last_seen_utc": "2026-04-30T00:46:00+00:00",
+                "runtime_mode_context": "live",
+                "active_warnings": [
+                    {
+                        "warning_type": "runtime_failed",
+                        "symbol": "BTC/USD",
+                        "timestamp_utc": "2026-04-30T00:46:00+00:00",
+                    }
+                ],
+            }
+        ],
+        "issues": [{"severity": "critical"}],
+        "notes": [],
+        "recent_control_actions": [],
+        "historical_context": {"historical_issue_count": 0},
+    }
+
+    state = tray_state_from_dashboard(payload)
+
+    assert "Latest warning: runtime_failed BTC/USD." in state.tooltip

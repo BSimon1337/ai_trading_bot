@@ -131,6 +131,8 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert b"Stop" in page_response.data
     assert b"Restart" in page_response.data
     assert b"Recent Control Activity" in page_response.data
+    assert b"Recent Runtime Events" in page_response.data
+    assert b"Active Warnings" in page_response.data
 
 
 def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path, monkeypatch):
@@ -416,6 +418,48 @@ def test_dashboard_contract_prefers_runtime_mode_context_over_stale_latest_mode(
     assert payload["instances"][0]["status"]["state"] == "live"
     assert payload["instances"][0]["runtime_mode_context"] == "live"
     assert payload["instances"][0]["latest_mode"] == "live"
+
+
+def test_dashboard_contract_renders_runtime_events_warnings_and_order_lifecycle(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "broker_rejection", symbol="BTC/USD")
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="failed",
+                runtime_mode_context="live",
+                runtime_status_message="Runtime process exited unexpectedly.",
+                runtime_session_id="session-btc",
+                runtime_last_seen_utc="2026-04-30T17:50:00+00:00",
+                last_lifecycle_event="failed",
+                runtime_lifecycle_events=(
+                    runtime_registry_lifecycle_event(
+                        symbol="BTC/USD",
+                        session_id="session-btc",
+                        timestamp_utc="2026-04-30T17:50:00+00:00",
+                        event_type="failed",
+                        message="Runtime process exited unexpectedly.",
+                    ),
+                ),
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    item = payload["instances"][0]
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert item["latest_order_lifecycle"]["display_summary"]
+    assert any(event["event_source"] == "runtime_manager" for event in item["recent_runtime_events"])
+    assert any(warning["warning_type"] == "runtime_failed" for warning in item["active_warnings"])
+    assert "Recent Runtime Events" in page_text
+    assert "Active Warnings" in page_text
 
 
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):

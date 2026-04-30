@@ -17,6 +17,7 @@ from tradingbot.app.runtime_manager import (
     ManagedControlAction,
     ManagedRuntime,
     empty_runtime_registry,
+    lifecycle_events_for_symbol,
     lifecycle_event_index,
     load_runtime_registry,
     request_restart_runtime_action,
@@ -231,6 +232,7 @@ class DashboardInstance:
     last_lifecycle_event: str = ""
     is_fresh_runtime_session: bool = False
     runtime_mode_context: str = ""
+    runtime_lifecycle_events: tuple[LifecycleEvent, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -384,6 +386,7 @@ def discover_monitor_instances(
     base_dir: Path = Path("logs"),
     runtime_index: dict[str, ManagedRuntime] | None = None,
     lifecycle_index: dict[str, LifecycleEvent] | None = None,
+    lifecycle_events_by_symbol: dict[str, tuple[LifecycleEvent, ...]] | None = None,
 ) -> tuple[DashboardInstance, ...]:
     if symbols is None and config is not None:
         symbols = config.symbols
@@ -420,6 +423,9 @@ def discover_monitor_instances(
                 runtime_last_seen_utc="" if runtime is None else runtime.last_seen_utc,
                 last_lifecycle_event="" if lifecycle_event is None else lifecycle_event.event_type,
                 is_fresh_runtime_session=bool(runtime and runtime.lifecycle_state in {"starting", "running", "restarting"}),
+                runtime_lifecycle_events=()
+                if lifecycle_events_by_symbol is None
+                else lifecycle_events_by_symbol.get(symbol, ()),
             )
         )
     return tuple(instances)
@@ -427,14 +433,27 @@ def discover_monitor_instances(
 
 def load_runtime_registry_views(
     runtime_registry_path: Path,
-) -> tuple[dict[str, ManagedRuntime], dict[str, LifecycleEvent], tuple[ManagedControlAction, ...], str]:
+) -> tuple[
+    dict[str, ManagedRuntime],
+    dict[str, LifecycleEvent],
+    dict[str, tuple[LifecycleEvent, ...]],
+    tuple[ManagedControlAction, ...],
+    str,
+]:
     try:
         registry = load_runtime_registry(runtime_registry_path)
     except (OSError, ValueError, json.JSONDecodeError):
         registry = empty_runtime_registry()
+    runtime_index = runtime_state_index(registry)
+    lifecycle_index = lifecycle_event_index(registry)
+    lifecycle_events_by_symbol = {
+        symbol: lifecycle_events_for_symbol(registry, symbol)
+        for symbol in runtime_index
+    }
     return (
-        runtime_state_index(registry),
-        lifecycle_event_index(registry),
+        runtime_index,
+        lifecycle_index,
+        lifecycle_events_by_symbol,
         registry.recent_control_actions,
         registry.updated_at_utc,
     )
@@ -479,7 +498,7 @@ def load_monitor_configuration(
     ) or DEFAULT_ARCHIVE_MARKERS
     if config is not None:
         reconcile_runtime_registry(config, registry_path=runtime_registry_path)
-    runtime_index, lifecycle_index, recent_control_actions, _ = load_runtime_registry_views(runtime_registry_path)
+    runtime_index, lifecycle_index, lifecycle_events_by_symbol, recent_control_actions, _ = load_runtime_registry_views(runtime_registry_path)
     return MonitorConfiguration(
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -499,6 +518,7 @@ def load_monitor_configuration(
             base_dir=base_dir,
             runtime_index=runtime_index,
             lifecycle_index=lifecycle_index,
+            lifecycle_events_by_symbol=lifecycle_events_by_symbol,
         ),
     )
 
@@ -534,6 +554,10 @@ def _runtime_truth_instances(
     registry = reconcile_runtime_registry(config)
     runtime_index = runtime_state_index(registry)
     lifecycle_index = lifecycle_event_index(registry)
+    lifecycle_events_by_symbol = {
+        symbol: lifecycle_events_for_symbol(registry, symbol)
+        for symbol in runtime_index
+    }
     enriched: list[DashboardInstance] = []
     for instance in instances:
         symbol = instance.symbols[0] if instance.symbols else instance.label
@@ -556,6 +580,7 @@ def _runtime_truth_instances(
                     "last_lifecycle_event": "" if lifecycle_event is None else lifecycle_event.event_type,
                     "is_fresh_runtime_session": runtime.lifecycle_state in {"starting", "running", "restarting"},
                     "runtime_mode_context": runtime.mode or instance.runtime_mode_context,
+                    "runtime_lifecycle_events": lifecycle_events_by_symbol.get(symbol, ()),
                 }
             )
         )
@@ -738,13 +763,38 @@ def _freshness_bucket(timestamp_value: str | None, *, stale_after_minutes: int =
 
 def _runtime_events_for_instance(
     instance: DashboardInstance,
+    decisions: pd.DataFrame,
+    fills: pd.DataFrame,
     latest_decision: DecisionSummary,
     latest_fill: FillSummary,
     *,
     limit: int = DEFAULT_RUNTIME_EVENT_LIMIT,
 ) -> tuple[RuntimeEventEntry, ...]:
     events: list[RuntimeEventEntry] = []
-    if instance.last_lifecycle_event or instance.runtime_status_message:
+    def lifecycle_value(event: LifecycleEvent | dict[str, Any], field_name: str) -> str:
+        if isinstance(event, dict):
+            return _clean_value(event.get(field_name, ""))
+        return _clean_value(getattr(event, field_name, ""))
+
+    for event in instance.runtime_lifecycle_events:
+        session_id = lifecycle_value(event, "session_id")
+        event_type = lifecycle_value(event, "event_type")
+        timestamp_utc = lifecycle_value(event, "timestamp_utc")
+        symbol = lifecycle_value(event, "symbol") or instance.label
+        message = lifecycle_value(event, "message")
+        events.append(
+            RuntimeEventEntry(
+                event_id=f"{instance.label}-runtime-{session_id or event_type or 'event'}-{timestamp_utc}",
+                symbol=symbol,
+                timestamp_utc=timestamp_utc,
+                mode_context=instance.runtime_mode_context or latest_decision.mode or "",
+                runtime_phase=event_type or instance.last_lifecycle_event or instance.runtime_state or "runtime",
+                event_source="runtime_manager",
+                summary=message or instance.runtime_status_message or instance.status.message,
+                runtime_session_id=session_id or instance.runtime_session_id,
+            )
+        )
+    if not instance.runtime_lifecycle_events and (instance.last_lifecycle_event or instance.runtime_status_message):
         events.append(
             RuntimeEventEntry(
                 event_id=f"{instance.label}-runtime-{instance.runtime_session_id or instance.last_lifecycle_event or 'event'}",
@@ -757,7 +807,26 @@ def _runtime_events_for_instance(
                 runtime_session_id=instance.runtime_session_id,
             )
         )
-    if latest_fill.timestamp:
+
+    if not fills.empty:
+        recent_fill_rows = fills.tail(limit).to_dict(orient="records")
+        for row in recent_fill_rows:
+            side = str(row.get("side", "")).strip().lower() or "order"
+            result = str(row.get("result", "")).strip().lower() or "fill_event"
+            quantity = _clean_value(row.get("quantity")) or "?"
+            events.append(
+                RuntimeEventEntry(
+                    event_id=f"{instance.label}-fill-{_clean_value(row.get('order_id')) or _clean_value(row.get('timestamp'))}",
+                    symbol=_clean_value(row.get("symbol")) or instance.label,
+                    timestamp_utc=_clean_value(row.get("timestamp")),
+                    mode_context=_clean_value(row.get("mode")) or instance.runtime_mode_context or "",
+                    runtime_phase=result,
+                    event_source="fill_log",
+                    summary=f"{side} {quantity} {result}".strip(),
+                    runtime_session_id=instance.runtime_session_id,
+                )
+            )
+    elif latest_fill.timestamp:
         events.append(
             RuntimeEventEntry(
                 event_id=f"{instance.label}-fill-{latest_fill.order_id or latest_fill.timestamp}",
@@ -770,6 +839,25 @@ def _runtime_events_for_instance(
                 runtime_session_id=instance.runtime_session_id,
             )
         )
+
+    if not decisions.empty:
+        recent_decision_rows = decisions.tail(limit).to_dict(orient="records")
+        for row in recent_decision_rows:
+            action = str(row.get("action", "")).strip().lower() or "decision"
+            result = str(row.get("result", "")).strip().lower() or action
+            reason = _clean_value(row.get("reason")) or ""
+            events.append(
+                RuntimeEventEntry(
+                    event_id=f"{instance.label}-decision-{_clean_value(row.get('timestamp'))}-{action}",
+                    symbol=_clean_value(row.get("symbol")) or instance.label,
+                    timestamp_utc=_clean_value(row.get("timestamp")),
+                    mode_context=_clean_value(row.get("mode")) or instance.runtime_mode_context or "",
+                    runtime_phase=result,
+                    event_source="decision_log",
+                    summary=reason or f"{action} {result}".strip(),
+                    runtime_session_id=instance.runtime_session_id,
+                )
+            )
     elif latest_decision.timestamp:
         events.append(
             RuntimeEventEntry(
@@ -783,7 +871,14 @@ def _runtime_events_for_instance(
                 runtime_session_id=instance.runtime_session_id,
             )
         )
-    events = [event for event in events if event.timestamp_utc or event.summary]
+
+    deduped: dict[tuple[str, str, str], RuntimeEventEntry] = {}
+    for event in events:
+        if not (event.timestamp_utc or event.summary):
+            continue
+        key = (event.event_source, event.timestamp_utc, event.summary)
+        deduped[key] = event
+    events = list(deduped.values())
     events.sort(key=lambda event: _parse_instance_timestamp(event.timestamp_utc) or pd.Timestamp.min.tz_localize("UTC"), reverse=True)
     return tuple(events[:limit])
 
@@ -793,7 +888,23 @@ def _warning_events_for_instance(
     *,
     limit: int = DEFAULT_ACTIVE_WARNING_LIMIT,
 ) -> tuple[WarningEvent, ...]:
-    warnings = [
+    warnings = []
+    runtime_state = (instance.runtime_state or "").strip().lower()
+    if runtime_state in {"failed", "blocked", "paused"}:
+        warnings.append(
+            WarningEvent(
+                warning_id=f"{instance.label}-runtime-{runtime_state}",
+                symbol=instance.label,
+                severity="critical" if runtime_state in {"failed", "blocked"} else "warning",
+                warning_type=f"runtime_{runtime_state}",
+                origin="runtime_manager",
+                timestamp_utc=instance.runtime_last_seen_utc or instance.runtime_started_at_utc or _utc_now_iso(),
+                message=instance.runtime_status_message or instance.status.message,
+                is_active=True,
+            )
+        )
+    warnings.extend(
+        [
         WarningEvent(
             warning_id=f"{instance.label}-{issue.category}-{index}",
             symbol=instance.label,
@@ -805,7 +916,12 @@ def _warning_events_for_instance(
             is_active=True,
         )
         for index, issue in enumerate(instance.issues, start=1)
-    ]
+        ]
+    )
+    warnings.sort(
+        key=lambda event: _parse_instance_timestamp(event.timestamp_utc) or pd.Timestamp.min.tz_localize("UTC"),
+        reverse=True,
+    )
     return tuple(warnings[:limit])
 
 
@@ -824,7 +940,7 @@ def _latest_order_lifecycle_for_instance(
             lifecycle_source="fill_log",
             event_time_utc=latest_fill.timestamp,
             is_terminal=terminal,
-            display_summary=f"{side} {state}".strip(),
+            display_summary=f"{side} order {state}".strip(),
         )
     decision_state = (latest_decision.result or "").strip().lower()
     decision_action = (latest_decision.action or "").strip().lower()
@@ -836,7 +952,7 @@ def _latest_order_lifecycle_for_instance(
             lifecycle_source="decision_log",
             event_time_utc=latest_decision.timestamp,
             is_terminal=state in {"filled", "rejected", "canceled"},
-            display_summary=f"{decision_action} {state}".strip(),
+            display_summary=f"{decision_action} order {state}".strip(),
         )
     return OrderLifecycleSummary()
 
@@ -906,7 +1022,7 @@ def _load_recent_control_actions(
                 config.runtime_registry_path if config is not None else "logs/runtime/runtime_registry.json",
             )
         )
-        _, _, actions, updated_at_utc = load_runtime_registry_views(registry_path)
+        _, _, _, actions, updated_at_utc = load_runtime_registry_views(registry_path)
     effective_limit = max(1, limit)
     if config is not None:
         effective_limit = max(1, int(config.runtime_recent_control_actions_limit))
@@ -1781,6 +1897,7 @@ def summarize_instance(
         last_lifecycle_event=instance.last_lifecycle_event,
         is_fresh_runtime_session=instance.is_fresh_runtime_session,
         runtime_mode_context=instance.runtime_mode_context,
+        runtime_lifecycle_events=instance.runtime_lifecycle_events,
     )
 
 
@@ -1839,6 +1956,8 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
     active_warning_limit = getattr(config, "monitor_active_warning_limit", DEFAULT_ACTIVE_WARNING_LIMIT) if config is not None else DEFAULT_ACTIVE_WARNING_LIMIT
     recent_runtime_events = _runtime_events_for_instance(
         instance,
+        decisions,
+        fills,
         latest_decision,
         latest_fill,
         limit=runtime_event_limit,

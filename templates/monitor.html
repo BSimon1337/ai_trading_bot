@@ -499,6 +499,14 @@
             <div class="k">Historical Issues</div>
             <div class="v">{{ instance.historical_issue_count }}</div>
           </div>
+          <div class="mini">
+            <div class="k">Order Lifecycle</div>
+            <div class="v" style="font-size:14px">{{ instance.latest_order_lifecycle.display_summary }}</div>
+          </div>
+          <div class="mini">
+            <div class="k">Active Warnings</div>
+            <div class="v">{{ instance.active_warnings|length }}</div>
+          </div>
         </div>
         <p class="muted" style="margin: 12px 0 0 0;">
           runtime {{ instance.runtime_state or "unmanaged" }}
@@ -630,6 +638,76 @@
         <div class="card"><div class="k">Reason</div><div class="v" style="font-size:14px">{{ instance.latest_reason }}</div></div>
         <div class="card"><div class="k">Decisions Today</div><div class="v">{{ instance.decisions_today }}</div></div>
         <div class="card"><div class="k">Fills Today</div><div class="v">{{ instance.fills_today }}</div></div>
+        <div class="card"><div class="k">Order Lifecycle</div><div class="v" style="font-size:14px">{{ instance.latest_order_lifecycle.display_summary }}</div></div>
+        <div class="card"><div class="k">Lifecycle Source</div><div class="v" style="font-size:14px">{{ instance.latest_order_lifecycle.lifecycle_source }}</div></div>
+        <div class="card"><div class="k">Lifecycle Time</div><div class="v" style="font-size:14px">{{ instance.latest_order_lifecycle.event_time_utc or "Unavailable" }}</div></div>
+        <div class="card"><div class="k">Active Warnings</div><div class="v">{{ instance.active_warnings|length }}</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>{{ instance.label }} Recent Runtime Events</h2>
+        {% if instance.recent_runtime_events %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>timestamp_utc</th>
+                <th>runtime_phase</th>
+                <th>event_source</th>
+                <th>mode_context</th>
+                <th>summary</th>
+                <th>runtime_session_id</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for event in instance.recent_runtime_events %}
+              <tr>
+                <td>{{ event.timestamp_utc or "Unavailable" }}</td>
+                <td>{{ event.runtime_phase }}</td>
+                <td>{{ event.event_source }}</td>
+                <td>{{ event.mode_context or "unknown" }}</td>
+                <td>{{ event.summary }}</td>
+                <td>{{ event.runtime_session_id or "Unavailable" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">No recent runtime milestones yet.</div>
+        {% endif %}
+      </div>
+
+      <div class="panel">
+        <h2>{{ instance.label }} Active Warnings</h2>
+        {% if instance.active_warnings %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>timestamp_utc</th>
+                <th>severity</th>
+                <th>warning_type</th>
+                <th>origin</th>
+                <th>message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for warning in instance.active_warnings %}
+              <tr>
+                <td>{{ warning.timestamp_utc or "Unavailable" }}</td>
+                <td>{{ warning.severity }}</td>
+                <td>{{ warning.warning_type }}</td>
+                <td>{{ warning.origin }}</td>
+                <td>{{ warning.message }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">No active warnings for this runtime.</div>
+        {% endif %}
       </div>
 
       <div class="chart-grid">

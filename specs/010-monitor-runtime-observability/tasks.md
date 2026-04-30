@@ -75,18 +75,18 @@
 
 ### Tests for User Story 2
 
-- [ ] T021 [P] [US2] Add unit coverage for runtime event normalization and warning extraction in `tests/unit/test_monitor_data.py`
-- [ ] T022 [P] [US2] Add unit coverage for runtime-manager lifecycle event shaping in `tests/unit/test_runtime_manager.py`
-- [ ] T023 [P] [US2] Add contract checks for recent runtime events, warnings, and order lifecycle fields in `tests/contract/test_dashboard_monitor_contract.py`
-- [ ] T024 [P] [US2] Add tray contract/state coverage for failed and exited runtime outcomes in `tests/contract/test_tray_monitor_contract.py` and `tests/unit/test_tray_state.py`
+- [x] T021 [P] [US2] Add unit coverage for runtime event normalization and warning extraction in `tests/unit/test_monitor_data.py`
+- [x] T022 [P] [US2] Add unit coverage for runtime-manager lifecycle event shaping in `tests/unit/test_runtime_manager.py`
+- [x] T023 [P] [US2] Add contract checks for recent runtime events, warnings, and order lifecycle fields in `tests/contract/test_dashboard_monitor_contract.py`
+- [x] T024 [P] [US2] Add tray contract/state coverage for failed and exited runtime outcomes in `tests/contract/test_tray_monitor_contract.py` and `tests/unit/test_tray_state.py`
 
 ### Implementation for User Story 2
 
-- [ ] T025 [US2] Add normalized recent runtime event and order-lifecycle shaping in `tradingbot/app/monitor.py`
-- [ ] T026 [US2] Emit or expose monitor-consumable lifecycle and warning evidence through `tradingbot/app/runtime_manager.py`
-- [ ] T027 [US2] Surface broker, malformed-evidence, and runtime warnings in the dashboard payload in `tradingbot/app/monitor.py`
-- [ ] T028 [US2] Render recent runtime events, order lifecycle, and warning summaries in `templates/monitor.html`
-- [ ] T029 [US2] Reflect major failed or exited runtime outcomes in tray summaries in `tradingbot/app/tray.py`
+- [x] T025 [US2] Add normalized recent runtime event and order-lifecycle shaping in `tradingbot/app/monitor.py`
+- [x] T026 [US2] Emit or expose monitor-consumable lifecycle and warning evidence through `tradingbot/app/runtime_manager.py`
+- [x] T027 [US2] Surface broker, malformed-evidence, and runtime warnings in the dashboard payload in `tradingbot/app/monitor.py`
+- [x] T028 [US2] Render recent runtime events, order lifecycle, and warning summaries in `templates/monitor.html`
+- [x] T029 [US2] Reflect major failed or exited runtime outcomes in tray summaries in `tradingbot/app/tray.py`
 
 **Checkpoint**: User Story 2 should let the operator explain what a bot just did without opening the terminal.
 

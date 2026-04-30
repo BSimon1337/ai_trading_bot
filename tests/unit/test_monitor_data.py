@@ -1343,6 +1343,72 @@ def test_dashboard_status_exposes_symbol_scoped_runtime_event_summary(tmp_path):
     assert any(event["event_source"] == "runtime_manager" for event in item["recent_runtime_events"])
 
 
+def test_dashboard_status_normalizes_recent_runtime_events_from_runtime_fill_and_decision_evidence(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    write_decisions(
+        paths["decisions"],
+        [
+            recent_decision(
+                symbol="BTC/USD",
+                timestamp="2026-04-30T17:44:50+00:00",
+                mode="live",
+                action="buy",
+                action_source="model_with_sentiment_confirmation",
+                reason="submitted",
+                result="submitted",
+            ),
+            recent_decision(
+                symbol="BTC/USD",
+                timestamp="2026-04-30T17:45:10+00:00",
+                mode="live",
+                action="hold",
+                action_source="guardrail",
+                reason="delta_qty_zero",
+                result="skipped",
+            ),
+        ],
+    )
+    paths["fills"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result",
+                "2026-04-30T17:45:16+00:00,live,BTC/USD,crypto,buy,0.00026,order-1,99.10,59.91,19.85,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime is running.",
+        runtime_session_id="session-btc",
+        runtime_last_seen_utc="2026-04-30T17:45:20+00:00",
+        last_lifecycle_event="running",
+        runtime_lifecycle_events=(
+            runtime_registry_lifecycle_event(
+                symbol="BTC/USD",
+                session_id="session-btc",
+                timestamp_utc="2026-04-30T17:45:20+00:00",
+                event_type="running",
+                message="Runtime is running.",
+            ),
+        ),
+    )
+
+    payload = dashboard_status((instance,))
+    events = payload["instances"][0]["recent_runtime_events"]
+
+    assert events[0]["event_source"] == "runtime_manager"
+    assert any(event["event_source"] == "fill_log" and event["runtime_phase"] == "filled" for event in events)
+    assert any(event["event_source"] == "decision_log" and event["runtime_phase"] == "submitted" for event in events)
+
+
 def test_dashboard_status_prefers_live_badge_for_running_managed_stock_runtime_without_trade_rows(tmp_path):
     paths = create_monitor_fixture(tmp_path / "spy", "no_data", symbol="SPY")
     Path(paths["decisions"]).write_text(
@@ -1372,6 +1438,33 @@ def test_dashboard_status_prefers_live_badge_for_running_managed_stock_runtime_w
     assert summary.status.state == "live"
     assert item["status_state"] == "live"
     assert item["latest_mode"] == "live"
+
+
+def test_dashboard_status_surfaces_runtime_failure_as_active_warning(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="failed",
+                runtime_mode_context="live",
+                runtime_status_message="Runtime process exited unexpectedly.",
+                runtime_session_id="session-btc",
+                runtime_last_seen_utc="2026-04-30T17:50:00+00:00",
+                last_lifecycle_event="failed",
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["active_warnings"]
+    assert item["active_warnings"][0]["warning_type"] == "runtime_failed"
+    assert item["active_warnings"][0]["origin"] == "runtime_manager"
 
 
 def test_dashboard_status_prefers_current_healthy_restart_over_old_failed_evidence(tmp_path):

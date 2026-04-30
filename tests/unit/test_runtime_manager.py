@@ -16,6 +16,7 @@ from tradingbot.app.runtime_manager import (
     build_runtime_launch_command,
     build_runtime_launch_env,
     build_symbol_runtime_config,
+    lifecycle_events_for_symbol,
     load_runtime_registry,
     reconcile_runtime_registry,
     register_managed_runtime,
@@ -246,6 +247,22 @@ def test_add_control_action_preserves_recent_order_for_mixed_asset_activity():
     )
 
     assert [action.action_id for action in registry.recent_control_actions] == ["crypto-restart", "stock-stop"]
+
+
+def test_lifecycle_events_for_symbol_returns_bounded_symbol_specific_history():
+    registry = RuntimeRegistry(
+        lifecycle_events=(
+            _event(symbol="BTC/USD", session_id="session-btc-1", timestamp_utc="2026-04-28T02:00:00+00:00", event_type="starting"),
+            _event(symbol="ETH/USD", session_id="session-eth-1", timestamp_utc="2026-04-28T02:01:00+00:00", event_type="starting"),
+            _event(symbol="BTC/USD", session_id="session-btc-1", timestamp_utc="2026-04-28T02:02:00+00:00", event_type="running"),
+            _event(symbol="BTC/USD", session_id="session-btc-1", timestamp_utc="2026-04-28T02:03:00+00:00", event_type="failed"),
+        )
+    )
+
+    events = lifecycle_events_for_symbol(registry, "BTC/USD", limit=2)
+
+    assert [event.event_type for event in events] == ["running", "failed"]
+    assert all(event.symbol == "BTC/USD" for event in events)
 
 
 def test_build_symbol_runtime_config_uses_symbol_scoped_log_paths():

@@ -446,6 +446,18 @@ def lifecycle_event_index(registry: RuntimeRegistry) -> dict[str, LifecycleEvent
     return latest
 
 
+def lifecycle_events_for_symbol(
+    registry: RuntimeRegistry,
+    symbol: str,
+    *,
+    limit: int = DEFAULT_RECENT_SESSIONS_LIMIT,
+) -> tuple[LifecycleEvent, ...]:
+    if limit <= 0:
+        return ()
+    events = [event for event in registry.lifecycle_events if event.symbol == symbol]
+    return tuple(events[-limit:])
+
+
 def current_runtime_for_symbol(registry: RuntimeRegistry, symbol: str) -> ManagedRuntime | None:
     for runtime in registry.managed_runtimes:
         if runtime.symbol == symbol:

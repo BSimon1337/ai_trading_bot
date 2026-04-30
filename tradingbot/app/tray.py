@@ -205,10 +205,25 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
             f"{latest.get('symbol', 'unknown')} ({latest.get('asset_class', 'unknown')}) "
             f"{latest.get('outcome_state', 'unknown')}."
         )
+    latest_warning_summary = ""
+    warning_candidates = []
+    for instance in instances:
+        for warning in instance.get("active_warnings", []) or []:
+            warning_candidates.append(warning)
+    if warning_candidates:
+        latest_warning = sorted(
+            warning_candidates,
+            key=lambda warning: str(warning.get("timestamp_utc", "") or ""),
+            reverse=True,
+        )[0]
+        latest_warning_summary = (
+            f" Latest warning: {latest_warning.get('warning_type', 'warning')} "
+            f"{latest_warning.get('symbol', 'unknown')}."
+        )
     refresh_summary = f" Runtime refresh: {latest_runtime_refresh}." if latest_runtime_refresh else ""
     tooltip = (
         f"{summary} Instances: {instance_count}. {issue_summary} Notes: {note_count}."
-        f"{runtime_summary}{mode_summary}{latest_control_summary}{refresh_summary}{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
+        f"{runtime_summary}{mode_summary}{latest_control_summary}{latest_warning_summary}{refresh_summary}{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
     )
     return TrayState(
         label=label,
