@@ -142,7 +142,7 @@ The dashboard now controls runtime lifecycle only. It can start, stop, and resta
 What the refined monitor now shows:
 
 - one authoritative account overview per refresh
-- per-symbol held quantity and held-value estimate
+- per-symbol held quantity and symbol-local held-value estimate
 - separate `Issues` and `Notes` sections
 - last decision time, last fill time, and broker rejection count per bot
 - bounded `Historical Context` so archived or older failed evidence stays visible without overriding current state
@@ -152,8 +152,11 @@ What the refined monitor now shows:
 - app-owned runtime state per symbol, including session id, lifecycle event, and fresh-session context
 - a clear distinction between `running`, `stopped`, `paused`, `failed`, and merely `stale` evidence
 - dashboard lifecycle controls for `start`, `stop`, and `restart`
-- visible live-vs-paper control context and explicit live confirmation prompts
+- visible live-vs-paper control context with trusted local live control sessions
 - recent control activity across both stock and crypto symbols
+- recent runtime events, warning summaries, and order-lifecycle state per symbol
+- explicit `Portfolio Freshness` semantics so `current`, `provisional`, `unavailable`, `stale`, and `historical` states are visible instead of implied
+- isolated symbol cards so one symbol's held value or account state does not overwrite another card after startup or fills
 
 Recommended monitor startup for your current multi-crypto setup:
 
@@ -184,8 +187,9 @@ Monitor and control troubleshooting:
 - Historical noise still showing up as current: move older evidence into folders named like `archived`, `history`, or `old`, or set `MONITOR_ARCHIVE_MARKERS` to match your retention folder names.
 - Current evidence feeling too old or too aggressive: tune `MONITOR_STALE_AFTER_MINUTES` and `MONITOR_HISTORICAL_ISSUE_LIMIT` for your local workflow.
 - Runtime shows `stopped` while old decisions still exist: this is expected once the runtime manager owns lifecycle state; `stopped` now beats stale CSV evidence.
-- Live start or restart is blocked from the dashboard: enter the configured `LIVE_CONFIRMATION_TOKEN` in the live confirmation field before submitting the action.
+- Live runtime startup is still guarded by `LIVE_RUN_CONFIRMATION`, but the dashboard should satisfy that through its trusted local session instead of a per-click confirmation box.
 - Dashboard control appears to do nothing: check the `Recent Control Activity` table first; blocked and failed actions now show there with a reason before you need to inspect terminal output.
+- A symbol card shows `Account Cash` instead of a symbol-only cash balance because account cash is shared account-level evidence, while `Held Value` remains symbol-scoped.
 
 ## Runtime Manager
 
@@ -215,6 +219,13 @@ What it does not do yet:
 - dashboard editing for broader strategy/risk settings
 
 The next planned app layer after this is richer operator management on top of the current runtime controls, including settings and broader application workflow improvements, while continuing to support both stock and crypto symbols through one shared operator experience.
+
+The next monitor-focused refinement after interactive controls is runtime observability hardening. That work is intended to make the dashboard more trustworthy during startup and mixed-symbol activity by:
+
+- reconciling runtime truth against actual managed process state on every refresh
+- surfacing recent runtime milestones, warnings, and order-lifecycle progress directly in the dashboard
+- labeling provisional-versus-confirmed portfolio state explicitly
+- preventing one symbol's held value, cash state, or other portfolio evidence from leaking into another symbol's card after runtimes start
 
 Generated runtime evidence:
 
@@ -250,4 +261,23 @@ For package-style installs directly from GitHub:
 
 ```powershell
 python -m pip install "git+https://github.com/YOURNAME/ai_trading_bot.git@v0.1.0"
+```
+Quick monitor launcher:
+
+```powershell
+.\start_monitor.ps1
+```
+
+Double-click launcher:
+
+```text
+start_monitor.cmd
+```
+
+Optional examples:
+
+```powershell
+.\start_monitor.ps1 -Mode paper
+.\start_monitor.ps1 -Mode live -Symbols "SPY,BTC/USD,ETH/USD"
+.\start_monitor.ps1 -Tray
 ```

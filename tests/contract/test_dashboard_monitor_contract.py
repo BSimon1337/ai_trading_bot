@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from tests.conftest import make_bot_config
-from tests.fixtures.monitor.build_fixtures import create_monitor_fixture, write_runtime_registry
+from tests.fixtures.monitor.build_fixtures import (
+    create_monitor_fixture,
+    runtime_registry_lifecycle_event,
+    runtime_registry_runtime,
+    write_runtime_registry,
+)
 from tradingbot.app.monitor import DashboardInstance, create_app, load_monitor_configuration
 
 
@@ -52,10 +57,13 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "instances_count",
         "instances_with_fills",
         "is_stale",
+        "is_provisional",
+        "source",
     }
     assert payload["instances"][0]["label"] == "BTC/USD"
     assert set(payload["instances"][0]) >= {
         "status",
+        "status_reason",
         "symbols",
         "latest_action",
         "latest_reason",
@@ -63,6 +71,7 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "latest_asset_class",
         "latest_update_utc",
         "runtime_state",
+        "runtime_mode_context",
         "runtime_status_message",
         "runtime_session_id",
         "runtime_pid",
@@ -94,6 +103,12 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
         "notes",
         "held_value",
         "held_value_source",
+        "portfolio_is_provisional",
+        "recent_runtime_events",
+        "active_warnings",
+        "latest_order_lifecycle",
+        "freshness_state",
+        "freshness_explanation",
         "sentiment_label",
         "sentiment_probability",
         "sentiment_source",
@@ -118,6 +133,8 @@ def test_dashboard_routes_expose_required_contract_fields(tmp_path):
     assert b"Stop" in page_response.data
     assert b"Restart" in page_response.data
     assert b"Recent Control Activity" in page_response.data
+    assert b"Recent Runtime Events" in page_response.data
+    assert b"Active Warnings" in page_response.data
 
 
 def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path, monkeypatch):
@@ -131,12 +148,7 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
             "updated_at_utc": "2026-04-28T02:00:00+00:00",
             "managed_runtimes": [
                 {
-                    "symbol": "BTC/USD",
-                    "instance_label": "BTC/USD",
-                    "mode": "live",
-                    "lifecycle_state": "running",
-                    "session_id": "session-btc",
-                    "pid": 2468,
+                    **runtime_registry_runtime(symbol="BTC/USD", session_id="session-btc"),
                     "started_at_utc": "2026-04-28T01:55:00+00:00",
                     "last_seen_utc": "2026-04-28T02:00:00+00:00",
                     "decision_log_path": str(fixture_root / "decisions.csv"),
@@ -145,16 +157,7 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
                 }
             ],
             "recent_sessions": [],
-            "lifecycle_events": [
-                {
-                    "timestamp_utc": "2026-04-28T02:00:00+00:00",
-                    "symbol": "BTC/USD",
-                    "session_id": "session-btc",
-                    "event_type": "running",
-                    "message": "Runtime is running.",
-                    "source": "runtime_manager",
-                }
-            ],
+            "lifecycle_events": [runtime_registry_lifecycle_event(symbol="BTC/USD", session_id="session-btc")],
             "recent_control_actions": [
                 {
                     "action_id": "btcusd-start",
@@ -181,6 +184,7 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     item = payload["instances"][0]
 
     assert item["runtime_state"] == "running"
+    assert item["runtime_mode_context"] == "live"
     assert item["runtime_status_message"] == "Runtime is running."
     assert item["runtime_session_id"] == "session-btc"
     assert item["runtime_pid"] == 2468
@@ -188,13 +192,18 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
     assert item["last_lifecycle_event"] == "running"
     assert item["is_fresh_runtime_session"] is True
+    assert item["status_reason"] == "Runtime is running."
+    assert any(event["runtime_phase"] == "running" for event in item["recent_runtime_events"])
+    assert item["active_warnings"] == []
+    assert item["latest_order_lifecycle"]["lifecycle_state"] == "no_order"
+    assert item["freshness_state"] in {"current", "provisional", "stale", "historical", "unavailable"}
     assert item["control_asset_class"] == "crypto"
     assert item["control_mode_context"] == "live"
     assert item["control_runtime_state"] == "running"
     assert item["can_start"] is False
     assert item["can_stop"] is True
     assert item["can_restart"] is True
-    assert item["requires_live_confirmation"] is True
+    assert item["requires_live_confirmation"] is False
     assert payload["recent_control_actions"][0]["requested_action"] == "start"
     assert payload["recent_control_actions"][0]["symbol"] == "BTC/USD"
     assert payload["recent_control_actions"][0]["timestamp_utc"] == "2026-04-28T02:00:00+00:00"
@@ -202,6 +211,77 @@ def test_dashboard_contract_exposes_runtime_manager_fields_on_instances(tmp_path
     assert payload["recent_control_actions"][0]["confirmation_state"] == "confirmed"
     assert payload["recent_control_actions"][0]["runtime_session_id"] == "session-btc"
     assert payload["recent_control_activity_count"] == 1
+
+
+def test_dashboard_contract_keeps_symbol_local_portfolio_state_isolated_in_mixed_runs(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    now = datetime.now(timezone.utc)
+    snapshot_header = "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl"
+    fill_header = "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result"
+
+    btc_paths["snapshot"].write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - timedelta(seconds=30)).isoformat()},live,BTC/USD,96.27,2.80,0.00026000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_paths["snapshot"].write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - timedelta(seconds=30)).isoformat()},live,ETH/USD,96.27,2.80,0.00000000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_paths["fills"].write_text(
+        "\n".join(
+            [
+                fill_header,
+                f"{now.isoformat()},live,ETH/USD,crypto,buy,0.00702909,order-1,96.27,80.414264,15.855736,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    )
+    payload = app.test_client().get("/api/status").get_json()
+    items = {item["label"]: item for item in payload["instances"]}
+
+    assert items["BTC/USD"]["held_value"] is None
+    assert items["BTC/USD"]["held_value_source"] == "unavailable"
+    assert items["BTC/USD"]["freshness_state"] == "unavailable"
+    assert items["ETH/USD"]["held_value_source"] == "latest_fill_delta"
+    assert items["ETH/USD"]["portfolio_is_provisional"] is True
+    assert items["ETH/USD"]["freshness_state"] == "provisional"
+    assert payload["account_overview"]["cash"] == 80.414264
 
 
 def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_path):
@@ -221,7 +301,7 @@ def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_p
             "mode_context": "live",
             "requested_at_utc": "2026-04-28T02:00:00+00:00",
             "requested_from": "dashboard",
-            "confirmation_state": "confirmed",
+            "confirmation_state": "dashboard_session_trusted",
             "outcome_state": "succeeded",
             "outcome_message": "Runtime is running.",
             "runtime_session_id": "session-btc",
@@ -245,24 +325,71 @@ def test_dashboard_contract_control_routes_return_operator_visible_results(tmp_p
     )
     client = app.test_client()
 
-    blocked_response = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
-    blocked_payload = blocked_response.get_json()
-    response = client.post(
-        "/control/start",
-        data={"symbol": "BTC/USD", "mode_context": "live", "live_confirmation": "CONFIRM"},
-    )
+    response = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
     payload = response.get_json()
 
-    assert blocked_response.status_code == 200
-    assert blocked_payload["outcome_state"] == "blocked"
-    assert "requires confirmation" in blocked_payload["outcome_message"]
     assert response.status_code == 200
     assert payload["symbol"] == "BTC/USD"
     assert payload["requested_action"] == "start"
     assert payload["outcome_state"] == "succeeded"
     assert payload["outcome_message"] == "Runtime is running."
-    assert payload["confirmation_state"] == "confirmed"
-    assert observed_confirmation_states == ["confirmed"]
+    assert payload["confirmation_state"] == "dashboard_session_trusted"
+    assert observed_confirmation_states == ["dashboard_session_trusted"]
+
+
+def test_dashboard_contract_can_refresh_runtime_state_from_registry_after_app_start(tmp_path, monkeypatch):
+    stopped_paths = create_monitor_fixture(tmp_path / "stopped", "healthy", symbol="BTC/USD")
+    running_paths = create_monitor_fixture(tmp_path / "running", "healthy", symbol="BTC/USD")
+    config = make_bot_config(symbols=("BTC/USD",), runtime_registry_path=str(tmp_path / "runtime" / "runtime_registry.json"))
+
+    startup_instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=stopped_paths["decisions"],
+        fill_log_path=stopped_paths["fills"],
+        snapshot_log_path=stopped_paths["snapshot"],
+        runtime_state="stopped",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime stopped by operator.",
+    )
+    refreshed_instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=running_paths["decisions"],
+        fill_log_path=running_paths["fills"],
+        snapshot_log_path=running_paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime is running.",
+        runtime_session_id="session-btc-live",
+        runtime_pid=2468,
+        runtime_started_at_utc="2026-04-30T00:45:38+00:00",
+        runtime_last_seen_utc="2026-04-30T00:46:00+00:00",
+        last_lifecycle_event="running",
+        is_fresh_runtime_session=True,
+    )
+
+    class RefreshedConfig:
+        instances = (refreshed_instance,)
+        recent_control_actions = ()
+
+    monkeypatch.setattr("tradingbot.app.monitor.load_monitor_configuration", lambda config=None: RefreshedConfig())
+
+    app = create_app(
+        instances=(startup_instance,),
+        config=config,
+        refresh_runtime_state=True,
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "running"
+    assert item["runtime_status_message"] == "Runtime is running."
+    assert item["runtime_session_id"] == "session-btc-live"
 
 
 def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path):
@@ -295,6 +422,7 @@ def test_dashboard_contract_shows_stopped_runtime_as_stopped_not_stale(tmp_path)
     assert payload["instances"][0]["status"]["state"] == "stopped"
     assert "Runtime stopped by operator." in page_text
     assert "lifecycle stopped" in page_text
+    assert "Historical evidence below is from the most recent managed runtime session." in page_text
 
 
 def test_dashboard_contract_prefers_fresh_runtime_session_over_old_failed_logs(tmp_path):
@@ -329,6 +457,82 @@ def test_dashboard_contract_prefers_fresh_runtime_session_over_old_failed_logs(t
     assert payload["instances"][0]["status"]["state"] == "running"
     assert payload["instances"][0]["is_fresh_runtime_session"] is True
     assert "fresh session" in page_text
+
+
+def test_dashboard_contract_prefers_runtime_mode_context_over_stale_latest_mode(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "spy", "no_data", symbol="SPY")
+    paths["decisions"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
+                "2026-04-30T17:43:51+00:00,paper,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="SPY",
+                symbols=("SPY",),
+                asset_classes=("stock",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+                runtime_status_message="Runtime is running.",
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    assert payload["instances"][0]["status"]["state"] == "live"
+    assert payload["instances"][0]["runtime_mode_context"] == "live"
+    assert payload["instances"][0]["latest_mode"] == "live"
+
+
+def test_dashboard_contract_renders_runtime_events_warnings_and_order_lifecycle(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "broker_rejection", symbol="BTC/USD")
+    app = create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="failed",
+                runtime_mode_context="live",
+                runtime_status_message="Runtime process exited unexpectedly.",
+                runtime_session_id="session-btc",
+                runtime_last_seen_utc="2026-04-30T17:50:00+00:00",
+                last_lifecycle_event="failed",
+                runtime_lifecycle_events=(
+                    runtime_registry_lifecycle_event(
+                        symbol="BTC/USD",
+                        session_id="session-btc",
+                        timestamp_utc="2026-04-30T17:50:00+00:00",
+                        event_type="failed",
+                        message="Runtime process exited unexpectedly.",
+                    ),
+                ),
+            ),
+        )
+    )
+    client = app.test_client()
+
+    payload = client.get("/api/status").get_json()
+    item = payload["instances"][0]
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert item["latest_order_lifecycle"]["display_summary"]
+    assert any(event["event_source"] == "runtime_manager" for event in item["recent_runtime_events"])
+    assert any(warning["warning_type"] == "runtime_failed" for warning in item["active_warnings"])
+    assert "Recent Runtime Events" in page_text
+    assert "Active Warnings" in page_text
 
 
 def test_dashboard_contract_handles_missing_evidence_without_crashing(tmp_path):

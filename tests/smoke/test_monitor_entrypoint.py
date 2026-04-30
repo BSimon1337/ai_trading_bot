@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import monitor_app
 from tests.fixtures.monitor.build_fixtures import create_monitor_fixture
 from tradingbot.app.monitor import DashboardInstance
@@ -30,10 +32,15 @@ def test_tray_module_no_tray_entrypoint_starts_dashboard(monkeypatch):
         def run(self, **kwargs):
             calls["run_kwargs"] = kwargs
 
-    def fake_app_factory(*, instances, refresh_seconds):
+    def fake_app_factory(*, instances, config=None, recent_control_actions=(), refresh_seconds, refresh_runtime_state=False):
         calls["instances"] = instances
+        calls["config"] = config
+        calls["recent_control_actions"] = recent_control_actions
         calls["refresh_seconds"] = refresh_seconds
+        calls["refresh_runtime_state"] = refresh_runtime_state
         return FakeApp()
+
+    monkeypatch.setattr(tray_module, "_safe_bot_config", lambda: make_bot_config(symbols=("BTC/USD",)))
 
     exit_code = tray_module.run_monitor(
         argv=["--no-tray", "--host", "127.0.0.1", "--port", "8091", "--refresh-seconds", "5"],
@@ -43,13 +50,54 @@ def test_tray_module_no_tray_entrypoint_starts_dashboard(monkeypatch):
 
     assert exit_code == 0
     assert calls["instances"] == ()
+    assert calls["config"] is not None
+    assert calls["recent_control_actions"] == ()
     assert calls["refresh_seconds"] == 5
+    assert calls["refresh_runtime_state"] is True
     assert calls["run_kwargs"] == {
         "host": "127.0.0.1",
         "port": 8091,
         "debug": False,
         "use_reloader": False,
     }
+
+
+def test_tray_module_no_tray_monitor_preserves_runtime_control_configuration(monkeypatch):
+    calls: dict[str, object] = {}
+
+    class FakeApp:
+        def run(self, **kwargs):
+            calls["run_kwargs"] = kwargs
+
+    def fake_app_factory(*, instances, config=None, recent_control_actions=(), refresh_seconds, refresh_runtime_state=False):
+        calls["instances"] = instances
+        calls["config"] = config
+        calls["recent_control_actions"] = recent_control_actions
+        calls["refresh_seconds"] = refresh_seconds
+        calls["refresh_runtime_state"] = refresh_runtime_state
+        return FakeApp()
+
+    bot_config = make_bot_config(symbols=("BTC/USD",), runtime_registry_path="logs/runtime/runtime_registry.json")
+    monitor_config = MonitorConfiguration(
+        dashboard_host="127.0.0.1",
+        dashboard_port=8093,
+        refresh_seconds=7,
+        runtime_registry_path=bot_config.log_paths["decisions"].parent.parent / "runtime_registry.json",
+        recent_control_actions=(),
+        instances=(),
+    )
+    monkeypatch.setattr(tray_module, "_safe_bot_config", lambda: bot_config)
+
+    exit_code = tray_module.run_monitor(
+        argv=["--no-tray"],
+        config=monitor_config,
+        app_factory=fake_app_factory,
+    )
+
+    assert exit_code == 0
+    assert calls["config"] == bot_config
+    assert calls["refresh_seconds"] == 7
+    assert calls["refresh_runtime_state"] is True
 
 
 def test_monitor_app_root_main_uses_monitor_configuration(monkeypatch):
@@ -245,20 +293,136 @@ def test_monitor_dashboard_control_routes_accept_post_actions(tmp_path):
         restart_action_runner=fake_restart_action,
     ).test_client()
 
-    blocked = client.post("/control/start", data={"symbol": "BTC/USD", "mode_context": "live"})
-    assert blocked.status_code == 200
-    assert blocked.get_json()["outcome_state"] == "blocked"
     assert client.post(
         "/control/start",
-        data={"symbol": "BTC/USD", "mode_context": "live", "live_confirmation": "CONFIRM"},
+        data={"symbol": "BTC/USD", "mode_context": "live"},
     ).status_code == 200
     assert client.post("/control/stop", data={"symbol": "BTC/USD"}).status_code == 200
-    blocked_restart = client.post("/control/restart", data={"symbol": "BTC/USD", "mode_context": "live"})
-    assert blocked_restart.status_code == 200
-    assert blocked_restart.get_json()["outcome_state"] == "blocked"
     assert client.post(
         "/control/restart",
-        data={"symbol": "BTC/USD", "mode_context": "live", "live_confirmation": "CONFIRM"},
+        data={"symbol": "BTC/USD", "mode_context": "live"},
     ).status_code == 200
     assert calls == [("start", "BTC/USD", "live"), ("stop", "BTC/USD", ""), ("restart", "BTC/USD", "live")]
-    assert confirmation_states == ["confirmed"]
+    assert confirmation_states == ["dashboard_session_trusted"]
+
+
+def test_monitor_app_refreshes_runtime_truth_after_unexpected_exit(monkeypatch, tmp_path):
+    stopped_paths = create_monitor_fixture(tmp_path / "stopped", "healthy", symbol="BTC/USD")
+    failed_paths = create_monitor_fixture(tmp_path / "failed", "healthy", symbol="BTC/USD")
+    config = make_bot_config(symbols=("BTC/USD",), runtime_registry_path=str(tmp_path / "runtime" / "runtime_registry.json"))
+
+    startup_instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=stopped_paths["decisions"],
+        fill_log_path=stopped_paths["fills"],
+        snapshot_log_path=stopped_paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime is running.",
+        runtime_session_id="session-btc-live",
+        runtime_pid=2468,
+    )
+    refreshed_instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=failed_paths["decisions"],
+        fill_log_path=failed_paths["fills"],
+        snapshot_log_path=failed_paths["snapshot"],
+        runtime_state="failed",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime process exited unexpectedly.",
+        runtime_session_id="session-btc-live",
+        last_lifecycle_event="failed",
+    )
+
+    class RefreshedConfig:
+        instances = (refreshed_instance,)
+        recent_control_actions = ()
+
+    monkeypatch.setattr("tradingbot.app.monitor.load_monitor_configuration", lambda config=None: RefreshedConfig())
+
+    client = monitor_app.create_app(
+        instances=(startup_instance,),
+        config=config,
+        refresh_runtime_state=True,
+    ).test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+
+    assert payload["instances"][0]["runtime_state"] == "failed"
+    assert payload["instances"][0]["status"]["state"] == "failed"
+    assert "Runtime process exited unexpectedly." in page_text
+
+
+def test_monitor_app_keeps_mixed_symbol_portfolio_values_isolated_after_startup(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    now = datetime.now(timezone.utc)
+
+    btc_paths["snapshot"].write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                f"{(now - timedelta(seconds=30)).isoformat()},live,BTC/USD,96.27,2.80,0.00026000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_paths["snapshot"].write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                f"{(now - timedelta(seconds=30)).isoformat()},live,ETH/USD,96.27,2.80,0.00000000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eth_paths["fills"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result",
+                f"{now.isoformat()},live,ETH/USD,crypto,buy,0.00702909,order-1,96.27,80.414264,15.855736,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client = monitor_app.create_app(
+        instances=(
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    ).test_client()
+
+    payload = client.get("/api/status").get_json()
+    page_text = client.get("/").get_data(as_text=True)
+    items = {item["label"]: item for item in payload["instances"]}
+
+    assert items["BTC/USD"]["held_value"] is None
+    assert items["BTC/USD"]["held_value_source"] == "unavailable"
+    assert items["BTC/USD"]["freshness_state"] == "unavailable"
+    assert items["ETH/USD"]["held_value_source"] == "latest_fill_delta"
+    assert "Portfolio Freshness" in page_text
+    assert "Account Cash" in page_text

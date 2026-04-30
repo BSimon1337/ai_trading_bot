@@ -40,6 +40,8 @@ def _config(**overrides) -> BotConfig:
         live_trading_enabled=False,
         live_run_confirmation="",
         live_confirmation_token="CONFIRM",
+        monitor_runtime_event_limit=10,
+        monitor_active_warning_limit=5,
     )
     defaults.update(overrides)
     return BotConfig(**defaults)

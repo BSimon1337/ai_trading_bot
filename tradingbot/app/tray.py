@@ -12,6 +12,7 @@ from tradingbot.app.monitor import (
     dashboard_status,
     load_monitor_configuration,
 )
+from tradingbot.config.settings import load_config
 
 
 TRAY_MENU_ACTIONS = ("Open Dashboard", "Refresh Status", "Exit Monitor")
@@ -169,8 +170,20 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     warning_count = sum(1 for issue in issues if issue.get("severity") == "warning")
     running_runtime_count = sum(1 for instance in instances if instance.get("runtime_state") == "running")
     failed_runtime_count = sum(1 for instance in instances if instance.get("runtime_state") == "failed")
-    live_control_count = sum(1 for instance in instances if instance.get("control_mode_context") == "live")
-    paper_control_count = sum(1 for instance in instances if instance.get("control_mode_context") == "paper")
+    provisional_count = sum(1 for instance in instances if instance.get("freshness_state") == "provisional")
+    stale_portfolio_count = sum(1 for instance in instances if instance.get("freshness_state") == "stale")
+    unavailable_portfolio_count = sum(1 for instance in instances if instance.get("freshness_state") == "unavailable")
+    historical_portfolio_count = sum(1 for instance in instances if instance.get("freshness_state") == "historical")
+    live_control_count = sum(
+        1
+        for instance in instances
+        if (instance.get("runtime_mode_context") or instance.get("control_mode_context")) == "live"
+    )
+    paper_control_count = sum(
+        1
+        for instance in instances
+        if (instance.get("runtime_mode_context") or instance.get("control_mode_context")) == "paper"
+    )
     latest_runtime_refresh = max(
         (
             str(instance.get("runtime_last_seen_utc", "") or "")
@@ -188,6 +201,10 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
     historical_summary = f" Historical: {historical_issue_count}." if historical_issue_count else ""
     runtime_summary = f" Running runtimes: {running_runtime_count}. Failed runtimes: {failed_runtime_count}."
     mode_summary = f" Live controls: {live_control_count}. Paper controls: {paper_control_count}."
+    portfolio_state_summary = (
+        f" Portfolio freshness - provisional: {provisional_count}, stale: {stale_portfolio_count}, "
+        f"unavailable: {unavailable_portfolio_count}, historical: {historical_portfolio_count}."
+    )
     latest_control_summary = ""
     if recent_control_actions:
         latest = recent_control_actions[0]
@@ -196,10 +213,26 @@ def tray_state_from_dashboard(payload: dict[str, Any]) -> TrayState:
             f"{latest.get('symbol', 'unknown')} ({latest.get('asset_class', 'unknown')}) "
             f"{latest.get('outcome_state', 'unknown')}."
         )
+    latest_warning_summary = ""
+    warning_candidates = []
+    for instance in instances:
+        for warning in instance.get("active_warnings", []) or []:
+            warning_candidates.append(warning)
+    if warning_candidates:
+        latest_warning = sorted(
+            warning_candidates,
+            key=lambda warning: str(warning.get("timestamp_utc", "") or ""),
+            reverse=True,
+        )[0]
+        latest_warning_summary = (
+            f" Latest warning: {latest_warning.get('warning_type', 'warning')} "
+            f"{latest_warning.get('symbol', 'unknown')}."
+        )
     refresh_summary = f" Runtime refresh: {latest_runtime_refresh}." if latest_runtime_refresh else ""
     tooltip = (
         f"{summary} Instances: {instance_count}. {issue_summary} Notes: {note_count}."
-        f"{runtime_summary}{mode_summary}{latest_control_summary}{refresh_summary}{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
+        f"{runtime_summary}{mode_summary}{portfolio_state_summary}"
+        f"{latest_control_summary}{latest_warning_summary}{refresh_summary}{historical_summary} {TRAY_READ_ONLY_MESSAGE}"
     )
     return TrayState(
         label=label,
@@ -297,8 +330,17 @@ def _config_with_overrides(
         refresh_seconds=refresh_seconds or config.refresh_seconds,
         tray_enabled=config.tray_enabled if tray_enabled is None else tray_enabled,
         read_only=read_only,
+        runtime_registry_path=config.runtime_registry_path,
+        recent_control_actions=config.recent_control_actions,
         instances=config.instances,
     )
+
+
+def _safe_bot_config():
+    try:
+        return load_config()
+    except Exception:
+        return None
 
 
 def run_dashboard_only(
@@ -306,7 +348,17 @@ def run_dashboard_only(
     *,
     app_factory: Callable[..., Any] = create_app,
 ) -> Any:
-    app = app_factory(instances=config.instances, refresh_seconds=config.refresh_seconds)
+    bot_config = _safe_bot_config()
+    try:
+        app = app_factory(
+            instances=config.instances,
+            config=bot_config,
+            recent_control_actions=config.recent_control_actions,
+            refresh_seconds=config.refresh_seconds,
+            refresh_runtime_state=True,
+        )
+    except TypeError:
+        app = app_factory(instances=config.instances, refresh_seconds=config.refresh_seconds)
     app.run(host=config.dashboard_host, port=config.dashboard_port, debug=False, use_reloader=False)
     return app
 
@@ -319,7 +371,8 @@ def run_monitor(
     tray_launcher: Callable[..., tuple[TrayController, dict[str, Any]]] = start_monitor_tray,
 ) -> int:
     args = parse_args(argv)
-    base_config = config or load_monitor_configuration()
+    bot_config = _safe_bot_config()
+    base_config = config or load_monitor_configuration(config=bot_config)
     runtime_config = _config_with_overrides(
         base_config,
         host=args.host,
@@ -334,7 +387,16 @@ def run_monitor(
         return 0
 
     tray_launcher(config=runtime_config)
-    app = app_factory(instances=runtime_config.instances, refresh_seconds=runtime_config.refresh_seconds)
+    try:
+        app = app_factory(
+            instances=runtime_config.instances,
+            config=bot_config,
+            recent_control_actions=runtime_config.recent_control_actions,
+            refresh_seconds=runtime_config.refresh_seconds,
+            refresh_runtime_state=True,
+        )
+    except TypeError:
+        app = app_factory(instances=runtime_config.instances, refresh_seconds=runtime_config.refresh_seconds)
     app.run(host=runtime_config.dashboard_host, port=runtime_config.dashboard_port, debug=False, use_reloader=False)
     return 0
 

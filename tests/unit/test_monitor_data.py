@@ -10,13 +10,19 @@ from tests.fixtures.monitor.build_fixtures import (
     create_monitor_fixture,
     recent_control_action,
     recent_decision,
+    runtime_registry_lifecycle_event,
+    runtime_registry_runtime,
     write_decisions,
     write_malformed_csv,
     write_runtime_registry,
 )
 from tradingbot.app.monitor import (
     DEFAULT_HEADLINE_PREVIEW_LIMIT,
+    FillSummary,
+    VALUE_SOURCE_FILL_DELTA,
     VALUE_SOURCE_SNAPSHOT_DELTA,
+    VALUE_SOURCE_UNAVAILABLE,
+    _normalize_snapshot_frame,
     _filter_active_evidence,
     _headline_evidence_preview,
     _select_authoritative_account_instance,
@@ -80,6 +86,26 @@ def test_safe_read_csv_returns_empty_frame_and_issue_for_malformed_file(tmp_path
     assert result.issue.category == "malformed_csv"
 
 
+def test_safe_read_csv_recovers_rows_from_mixed_schema_file_when_possible(tmp_path):
+    path = tmp_path / "mixed.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,quantity,portfolio_value,cash,reason,result",
+                "2026-04-30T00:00:00+00:00,live,SPY,stock,hold,model,0,100,100,hold,skipped",
+                "2026-04-30T00:01:00+00:00,live,SPY,stock,hold,model,,,,,,,,extra",
+                "2026-04-30T00:02:00+00:00,live,SPY,stock,hold,model,0,101,100,hold,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = safe_read_csv(path, source="decisions")
+
+    assert result.issue is None
+    assert len(result.dataframe) == 2
+
+
 def test_safe_read_csv_reads_valid_decision_file(tmp_path):
     path = write_decisions(tmp_path / "decisions.csv", [recent_decision(symbol="BTC/USD")])
 
@@ -100,6 +126,20 @@ def test_normalize_timestamps_sorts_rows_by_timestamp():
     normalized = normalize_timestamps(frame)
 
     assert list(normalized["symbol"]) == ["ETH/USD", "BTC/USD"]
+
+
+def test_normalize_snapshot_frame_parses_mixed_date_and_timestamp_values():
+    frame = pd.DataFrame(
+        [
+            {"date": "2026-04-25", "symbol": "BTC/USD", "portfolio_value": "99.93", "cash": "25.97", "position_qty": "0.000193", "day_pnl": "0.0"},
+            {"date": "2026-04-29T20:56:00.159465-04:00", "symbol": "BTC/USD", "portfolio_value": "99.14", "cash": "59.915432", "position_qty": "0.00026", "day_pnl": "0.0"},
+        ]
+    )
+
+    normalized = _normalize_snapshot_frame(frame)
+
+    assert normalized["timestamp"].notna().all()
+    assert normalized.iloc[-1]["portfolio_value"] == "99.14"
 
 
 def test_numeric_helpers_use_defaults_for_bad_values():
@@ -263,6 +303,81 @@ def test_load_monitor_configuration_merges_runtime_registry_state(tmp_path, monk
     assert instance.runtime_started_at_utc == "2026-04-28T01:55:00+00:00"
 
 
+def test_load_monitor_configuration_uses_configured_observability_limits(tmp_path, monkeypatch):
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-30T00:46:00+00:00",
+            "managed_runtimes": [runtime_registry_runtime(symbol="BTC/USD")],
+            "recent_sessions": [],
+            "lifecycle_events": [],
+            "recent_control_actions": [],
+        },
+    )
+    monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
+    config = make_bot_config(
+        symbols=("BTC/USD",),
+        monitor_runtime_event_limit=7,
+        monitor_active_warning_limit=3,
+    )
+
+    monitor_config = load_monitor_configuration(config=config, symbols=("BTC/USD",))
+
+    assert monitor_config.runtime_event_limit == 7
+    assert monitor_config.active_warning_limit == 3
+
+
+def test_dashboard_status_overlays_reconciled_runtime_truth_from_registry(tmp_path, monkeypatch):
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-30T00:46:00+00:00",
+            "managed_runtimes": [
+                runtime_registry_runtime(
+                    symbol="BTC/USD",
+                    session_id="session-btc",
+                    lifecycle_state="running",
+                    pid=2468,
+                )
+            ],
+            "recent_sessions": [],
+            "lifecycle_events": [runtime_registry_lifecycle_event(symbol="BTC/USD", session_id="session-btc")],
+            "recent_control_actions": [],
+        },
+    )
+    monkeypatch.setattr("tradingbot.app.runtime_manager._is_process_running", lambda pid: False)
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    config = make_bot_config(symbols=("BTC/USD",), runtime_registry_path=str(runtime_registry_path))
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+                runtime_status_message="Runtime is running.",
+                runtime_session_id="session-btc",
+                runtime_pid=2468,
+            ),
+        ),
+        config=config,
+    )
+    item = payload["instances"][0]
+
+    assert item["runtime_state"] == "failed"
+    assert item["status"]["state"] == "failed"
+    assert item["runtime_status_message"] == "Runtime process exited unexpectedly."
+
+
 def test_summarize_instance_preserves_runtime_registry_metadata(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
     instance = DashboardInstance(
@@ -325,6 +440,13 @@ def test_dashboard_status_includes_runtime_registry_fields_on_instance_payload(t
     assert item["runtime_last_seen_utc"] == "2026-04-28T02:00:00+00:00"
     assert item["last_lifecycle_event"] == "running"
     assert item["is_fresh_runtime_session"] is True
+    assert item["status_reason"] == "Runtime is running."
+    assert item["recent_runtime_events"]
+    assert any(event["runtime_phase"] == "running" for event in item["recent_runtime_events"])
+    assert item["active_warnings"] == []
+    assert item["latest_order_lifecycle"]["lifecycle_state"] == "no_order"
+    assert item["freshness_state"] in {"current", "provisional", "stale", "historical", "unavailable"}
+    assert item["freshness_explanation"]
 
 
 def test_dashboard_status_includes_control_availability_fields_per_instance(tmp_path):
@@ -365,7 +487,7 @@ def test_dashboard_status_includes_control_availability_fields_per_instance(tmp_
     assert running_item["can_start"] is False
     assert running_item["can_stop"] is True
     assert running_item["can_restart"] is True
-    assert running_item["requires_live_confirmation"] is True
+    assert running_item["requires_live_confirmation"] is False
 
     assert stopped_item["control_asset_class"] == "stock"
     assert stopped_item["control_mode_context"] == "paper"
@@ -415,8 +537,38 @@ def test_dashboard_status_includes_live_and_paper_control_confirmation_messages(
     live_item = next(item for item in payload["instances"] if item["label"] == "BTC/USD")
     paper_item = next(item for item in payload["instances"] if item["label"] == "SPY")
 
-    assert live_item["control_confirmation_hint"] == "Enter CONFIRM before live start or restart."
-    assert paper_item["control_confirmation_hint"] == "Paper controls do not require live confirmation."
+    assert live_item["control_confirmation_hint"] == "Live controls use this trusted local dashboard session."
+    assert paper_item["control_confirmation_hint"] == "Live controls use this trusted local dashboard session."
+
+
+def test_dashboard_status_prefers_monitor_mode_for_stopped_runtime_controls(tmp_path):
+    paper_paths = create_monitor_fixture(tmp_path / "paper", "healthy", symbol="SPY")
+    config = make_bot_config(
+        paper=False,
+        live_trading_enabled=True,
+        symbols=("SPY",),
+    )
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="SPY",
+                symbols=("SPY",),
+                asset_classes=("stock",),
+                decision_log_path=paper_paths["decisions"],
+                fill_log_path=paper_paths["fills"],
+                snapshot_log_path=paper_paths["snapshot"],
+                runtime_state="stopped",
+                runtime_mode_context="paper",
+            ),
+        ),
+        config=config,
+    )
+
+    item = payload["instances"][0]
+
+    assert item["control_mode_context"] == "live"
+    assert item["control_confirmation_hint"] == "Live controls use this trusted local dashboard session."
 
 
 def test_dashboard_status_includes_recent_control_actions_from_runtime_registry(tmp_path, monkeypatch):
@@ -585,6 +737,33 @@ def test_dashboard_status_distinguishes_stopped_runtime_from_stale_logs(tmp_path
     assert payload["aggregate_state"] == "stopped"
 
 
+def test_dashboard_status_keeps_stopped_runtime_history_as_note_not_active_stale_issue(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "stale", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="stopped",
+                runtime_status_message="Runtime stopped by operator.",
+                runtime_session_id="session-btc",
+                runtime_started_at_utc="2026-04-28T01:55:00+00:00",
+                runtime_last_seen_utc="2026-04-28T02:10:00+00:00",
+                last_lifecycle_event="stopped",
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["status"]["state"] == "stopped"
+    assert not any(issue["category"] == "stale_data" for issue in item["issues"])
+    assert any(note["category"] == "historical_runtime_evidence" for note in item["notes"])
+
+
 def test_dashboard_status_prefers_fresh_runtime_session_over_older_failed_logs(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "failed", symbol="BTC/USD")
     runtime_started_at = (datetime.now(timezone.utc) + pd.Timedelta(minutes=1)).isoformat()
@@ -613,6 +792,39 @@ def test_dashboard_status_prefers_fresh_runtime_session_over_older_failed_logs(t
     assert item["status"]["state"] == "running"
     assert item["runtime_status_message"] == "Runtime is running."
     assert item["last_lifecycle_event"] == "restarted"
+
+
+def test_dashboard_status_prefers_runtime_mode_context_over_stale_system_mode(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "spy", "no_data", symbol="SPY")
+    Path(paths["decisions"]).write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
+                "2026-04-30T17:43:51+00:00,paper,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="SPY",
+                symbols=("SPY",),
+                asset_classes=("stock",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+                runtime_status_message="Runtime is running.",
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["status_state"] == "live"
+    assert item["latest_mode"] == "live"
+    assert item["runtime_mode_context"] == "live"
 
 
 def test_dashboard_status_distinguishes_fallback_neutral_from_real_neutral(tmp_path):
@@ -1027,6 +1239,57 @@ def test_value_evidence_falls_back_to_snapshot_delta_when_recent_fill_missing():
     assert source == VALUE_SOURCE_SNAPSHOT_DELTA
 
 
+def test_select_authoritative_account_instance_prefers_fresher_fill_over_older_snapshot():
+    old_summary = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=Path("logs/btc/decisions.csv"),
+        fill_log_path=Path("logs/btc/fills.csv"),
+        snapshot_log_path=Path("logs/btc/daily_snapshot.csv"),
+        latest_snapshot=SnapshotSummary(timestamp="2026-04-25T13:20:00+00:00"),
+    )
+    fill_fresh_summary = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=Path("logs/eth/decisions.csv"),
+        fill_log_path=Path("logs/eth/fills.csv"),
+        snapshot_log_path=Path("logs/eth/daily_snapshot.csv"),
+        latest_snapshot=SnapshotSummary(timestamp="2026-04-25T13:15:00+00:00"),
+        latest_fill=FillSummary(timestamp="2026-04-25T13:25:00+00:00"),
+    )
+
+    selected = _select_authoritative_account_instance(
+        [old_summary, fill_fresh_summary],
+        reference=datetime(2026, 4, 25, 13, 30, tzinfo=timezone.utc),
+        stale_after_minutes=180,
+    )
+
+    assert selected is not None
+    assert selected.label == "ETH/USD"
+
+
+def test_value_evidence_skips_snapshot_delta_when_symbol_local_values_are_required():
+    unit_value, held_value, source = _value_evidence(
+        SnapshotSummary(
+            timestamp="2026-04-25T13:20:00+00:00",
+            mode="live",
+            symbol="BTC/USD",
+            portfolio_value="100.0",
+            cash="80.0",
+            position_qty="2.0",
+            day_pnl="0.5",
+        ),
+        None,
+        allow_snapshot_delta=False,
+    )
+
+    assert unit_value == 0.0
+    assert held_value == 0.0
+    assert source == VALUE_SOURCE_UNAVAILABLE
+
+
 def test_dashboard_status_uses_snapshot_delta_held_value_without_recent_fill(tmp_path):
     paths = create_monitor_fixture(tmp_path / "btc", "no_recent_fill", symbol="BTC/USD")
     instance = DashboardInstance(
@@ -1045,6 +1308,348 @@ def test_dashboard_status_uses_snapshot_delta_held_value_without_recent_fill(tmp
     assert item["held_value"] == 20.0
     assert item["held_value_estimate"] == 20.0
     assert item["latest_fill_price"] == 10.0
+
+
+def test_dashboard_status_uses_provisional_fill_state_when_fill_is_newer_than_snapshot(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+    Path(paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                "2026-04-30T17:45:00+00:00,live,ETH/USD,99.10,59.91,0.0,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(paths["fills"]).write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result",
+                "2026-04-30T17:45:16+00:00,live,ETH/USD,crypto,buy,0.00702909,order-1,99.10,63.414264,15.855736,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="ETH/USD",
+        symbols=("ETH/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["position_qty"] == 0.00702909
+    assert item["cash"] == 63.414264
+    assert item["held_value_source"] == VALUE_SOURCE_FILL_DELTA
+    assert item["portfolio_is_provisional"] is True
+    assert item["freshness_state"] == "provisional"
+    assert "fresher fill evidence" in item["freshness_explanation"]
+
+
+def test_dashboard_status_prevents_snapshot_delta_leakage_across_mixed_symbols(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+
+    now = datetime.now(timezone.utc)
+    shared_snapshot_row = "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl"
+    Path(btc_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                shared_snapshot_row,
+                f"{now.isoformat()},live,BTC/USD,96.27,2.80,0.00026000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(eth_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                shared_snapshot_row,
+                f"{now.isoformat()},live,ETH/USD,96.27,2.80,0.00701200,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    )
+
+    btc_item, eth_item = payload["instances"]
+    assert btc_item["held_value"] is None
+    assert eth_item["held_value"] is None
+    assert btc_item["held_value_source"] == VALUE_SOURCE_UNAVAILABLE
+    assert eth_item["held_value_source"] == VALUE_SOURCE_UNAVAILABLE
+    assert btc_item["freshness_state"] == "unavailable"
+    assert eth_item["freshness_state"] == "unavailable"
+    assert payload["account_overview"]["account_equity"] == 96.27
+    assert payload["account_overview"]["cash"] == 2.8
+
+
+def test_dashboard_status_uses_symbol_local_fill_delta_without_polluting_other_symbols(tmp_path):
+    btc_paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    eth_paths = create_monitor_fixture(tmp_path / "eth", "healthy", symbol="ETH/USD")
+
+    now = datetime.now(timezone.utc)
+    snapshot_header = "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl"
+    fill_header = "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result"
+    Path(btc_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - pd.Timedelta(seconds=30)).isoformat()},live,BTC/USD,96.27,2.80,0.00026000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(eth_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - pd.Timedelta(seconds=30)).isoformat()},live,ETH/USD,96.27,2.80,0.00000000,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(eth_paths["fills"]).write_text(
+        "\n".join(
+            [
+                fill_header,
+                f"{now.isoformat()},live,ETH/USD,crypto,buy,0.00702909,order-1,96.27,80.414264,15.855736,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=btc_paths["decisions"],
+                fill_log_path=btc_paths["fills"],
+                snapshot_log_path=btc_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="ETH/USD",
+                symbols=("ETH/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=eth_paths["decisions"],
+                fill_log_path=eth_paths["fills"],
+                snapshot_log_path=eth_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    )
+
+    btc_item, eth_item = payload["instances"]
+    assert btc_item["held_value"] is None
+    assert btc_item["held_value_source"] == VALUE_SOURCE_UNAVAILABLE
+    assert btc_item["freshness_state"] == "unavailable"
+    assert eth_item["held_value_source"] == VALUE_SOURCE_FILL_DELTA
+    assert eth_item["portfolio_is_provisional"] is True
+    assert eth_item["freshness_state"] == "provisional"
+    assert eth_item["position_qty"] == 0.00702909
+    assert eth_item["held_value"] is not None
+
+
+def test_dashboard_status_exposes_symbol_scoped_warning_events(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "broker_rejection", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert item["active_warnings"]
+    assert item["active_warnings"][0]["symbol"] == "BTC/USD"
+    assert item["active_warnings"][0]["warning_type"] == "broker_rejection"
+
+
+def test_dashboard_status_exposes_symbol_scoped_runtime_event_summary(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime is running.",
+        runtime_session_id="session-btc",
+        runtime_last_seen_utc="2026-04-30T00:46:00+00:00",
+        last_lifecycle_event="running",
+    )
+
+    payload = dashboard_status((instance,))
+    item = payload["instances"][0]
+
+    assert any(event["symbol"] == "BTC/USD" for event in item["recent_runtime_events"])
+    assert any(event["runtime_session_id"] == "session-btc" for event in item["recent_runtime_events"])
+    assert any(event["event_source"] == "runtime_manager" for event in item["recent_runtime_events"])
+
+
+def test_dashboard_status_normalizes_recent_runtime_events_from_runtime_fill_and_decision_evidence(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    write_decisions(
+        paths["decisions"],
+        [
+            recent_decision(
+                symbol="BTC/USD",
+                timestamp="2026-04-30T17:44:50+00:00",
+                mode="live",
+                action="buy",
+                action_source="model_with_sentiment_confirmation",
+                reason="submitted",
+                result="submitted",
+            ),
+            recent_decision(
+                symbol="BTC/USD",
+                timestamp="2026-04-30T17:45:10+00:00",
+                mode="live",
+                action="hold",
+                action_source="guardrail",
+                reason="delta_qty_zero",
+                result="skipped",
+            ),
+        ],
+    )
+    paths["fills"].write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result",
+                "2026-04-30T17:45:16+00:00,live,BTC/USD,crypto,buy,0.00026,order-1,99.10,59.91,19.85,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="BTC/USD",
+        symbols=("BTC/USD",),
+        asset_classes=("crypto",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_status_message="Runtime is running.",
+        runtime_session_id="session-btc",
+        runtime_last_seen_utc="2026-04-30T17:45:20+00:00",
+        last_lifecycle_event="running",
+        runtime_lifecycle_events=(
+            runtime_registry_lifecycle_event(
+                symbol="BTC/USD",
+                session_id="session-btc",
+                timestamp_utc="2026-04-30T17:45:20+00:00",
+                event_type="running",
+                message="Runtime is running.",
+            ),
+        ),
+    )
+
+    payload = dashboard_status((instance,))
+    events = payload["instances"][0]["recent_runtime_events"]
+
+    assert events[0]["event_source"] == "runtime_manager"
+    assert any(event["event_source"] == "fill_log" and event["runtime_phase"] == "filled" for event in events)
+    assert any(event["event_source"] == "decision_log" and event["runtime_phase"] == "submitted" for event in events)
+
+
+def test_dashboard_status_prefers_live_badge_for_running_managed_stock_runtime_without_trade_rows(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "spy", "no_data", symbol="SPY")
+    Path(paths["decisions"]).write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result",
+                "2026-04-30T17:43:51+00:00,active-live,SYSTEM,system,hold,guardrail,,,,,0,,,runtime started,started",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="SPY",
+        symbols=("SPY",),
+        asset_classes=("stock",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+    )
+
+    summary = summarize_instance(instance)
+    payload = dashboard_status((summary,))
+    item = payload["instances"][0]
+
+    assert summary.status.state == "live"
+    assert item["status_state"] == "live"
+    assert item["latest_mode"] == "live"
+
+
+def test_dashboard_status_surfaces_runtime_failure_as_active_warning(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "btc", "healthy", symbol="BTC/USD")
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="BTC/USD",
+                symbols=("BTC/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=paths["decisions"],
+                fill_log_path=paths["fills"],
+                snapshot_log_path=paths["snapshot"],
+                runtime_state="failed",
+                runtime_mode_context="live",
+                runtime_status_message="Runtime process exited unexpectedly.",
+                runtime_session_id="session-btc",
+                runtime_last_seen_utc="2026-04-30T17:50:00+00:00",
+                last_lifecycle_event="failed",
+            ),
+        )
+    )
+    item = payload["instances"][0]
+
+    assert item["active_warnings"]
+    assert item["active_warnings"][0]["warning_type"] == "runtime_failed"
+    assert item["active_warnings"][0]["origin"] == "runtime_manager"
 
 
 def test_dashboard_status_prefers_current_healthy_restart_over_old_failed_evidence(tmp_path):

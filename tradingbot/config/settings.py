@@ -111,6 +111,8 @@ class BotConfig:
     runtime_registry_path: str = "logs/runtime/runtime_registry.json"
     runtime_recent_sessions_limit: int = 25
     runtime_recent_control_actions_limit: int = 25
+    monitor_runtime_event_limit: int = 10
+    monitor_active_warning_limit: int = 5
     offline_news_enabled: bool = False
     offline_news_dir: str = "data/offline_news"
 
@@ -226,6 +228,8 @@ def load_config() -> BotConfig:
         or "logs/runtime/runtime_registry.json",
         runtime_recent_sessions_limit=_get_int("RUNTIME_RECENT_SESSIONS_LIMIT", 25),
         runtime_recent_control_actions_limit=_get_int("RUNTIME_RECENT_CONTROL_ACTIONS_LIMIT", 25),
+        monitor_runtime_event_limit=_get_int("MONITOR_RUNTIME_EVENT_LIMIT", 10),
+        monitor_active_warning_limit=_get_int("MONITOR_ACTIVE_WARNING_LIMIT", 5),
         offline_news_enabled=_get_bool("OFFLINE_NEWS_ENABLED", False),
         offline_news_dir=os.getenv("OFFLINE_NEWS_DIR", "data/offline_news").strip() or "data/offline_news",
     )

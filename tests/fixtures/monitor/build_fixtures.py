@@ -36,6 +36,58 @@ def write_runtime_registry(path: Path, payload: dict[str, object]) -> Path:
     return path
 
 
+def runtime_registry_runtime(
+    symbol: str = "BTC/USD",
+    *,
+    mode: str = "live",
+    lifecycle_state: str = "running",
+    session_id: str | None = None,
+    pid: int = 2468,
+    **overrides,
+) -> dict[str, object]:
+    normalized = symbol.replace("/", "").lower()
+    row: dict[str, object] = {
+        "symbol": symbol,
+        "instance_label": symbol,
+        "mode": mode,
+        "lifecycle_state": lifecycle_state,
+        "session_id": session_id or f"session-{normalized}",
+        "pid": pid,
+        "started_at_utc": "2026-04-30T00:45:38+00:00",
+        "last_seen_utc": "2026-04-30T00:46:00+00:00",
+        "stop_requested_at_utc": "",
+        "last_exit_code": None,
+        "failure_reason": "",
+        "decision_log_path": f"logs/paper_validation_{normalized}/decisions.csv" if symbol != "SPY" else "logs/paper_validation/decisions.csv",
+        "fill_log_path": f"logs/paper_validation_{normalized}/fills.csv" if symbol != "SPY" else "logs/paper_validation/fills.csv",
+        "snapshot_log_path": f"logs/paper_validation_{normalized}/daily_snapshot.csv" if symbol != "SPY" else "logs/paper_validation/daily_snapshot.csv",
+    }
+    row.update(overrides)
+    return row
+
+
+def runtime_registry_lifecycle_event(
+    symbol: str = "BTC/USD",
+    *,
+    session_id: str | None = None,
+    event_type: str = "running",
+    message: str = "Runtime is running.",
+    source: str = "runtime_manager",
+    **overrides,
+) -> dict[str, object]:
+    normalized = symbol.replace("/", "").lower()
+    row: dict[str, object] = {
+        "timestamp_utc": "2026-04-30T00:46:00+00:00",
+        "symbol": symbol,
+        "session_id": session_id or f"session-{normalized}",
+        "event_type": event_type,
+        "message": message,
+        "source": source,
+    }
+    row.update(overrides)
+    return row
+
+
 def recent_control_action(
     symbol: str = "SPY",
     *,

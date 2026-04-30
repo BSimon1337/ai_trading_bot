@@ -17,11 +17,13 @@ from tradingbot.app.runtime_manager import (
     ManagedControlAction,
     ManagedRuntime,
     empty_runtime_registry,
+    lifecycle_events_for_symbol,
     lifecycle_event_index,
     load_runtime_registry,
     request_restart_runtime_action,
     request_start_runtime_action,
     request_stop_runtime_action,
+    reconcile_runtime_registry,
     runtime_state_index,
 )
 from tradingbot.config.settings import BotConfig, infer_asset_class
@@ -34,11 +36,14 @@ DEFAULT_HISTORY_ISSUE_LIMIT = 5
 DEFAULT_ARCHIVE_MARKERS = ("archive", "archived", "history", "historical", "old", "retained")
 SENSITIVE_KEYWORDS = ("key", "secret", "token", "password", "credential")
 VALUE_SOURCE_FILL = "latest_fill"
+VALUE_SOURCE_FILL_DELTA = "latest_fill_delta"
 VALUE_SOURCE_SNAPSHOT_DELTA = "snapshot_delta"
 VALUE_SOURCE_UNAVAILABLE = "unavailable"
 DEFAULT_HEADLINE_PREVIEW_LIMIT = 3
 DEFAULT_SENTIMENT_TREND_LIMIT = 5
 DEFAULT_CONTROL_ACTIVITY_LIMIT = 25
+DEFAULT_RUNTIME_EVENT_LIMIT = 10
+DEFAULT_ACTIVE_WARNING_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -156,6 +161,50 @@ class SentimentTrendEntry:
 
 
 @dataclass(frozen=True)
+class RuntimeEventEntry:
+    event_id: str = ""
+    symbol: str = ""
+    timestamp_utc: str = ""
+    mode_context: str = ""
+    runtime_phase: str = ""
+    event_source: str = ""
+    summary: str = ""
+    runtime_session_id: str = ""
+
+
+@dataclass(frozen=True)
+class WarningEvent:
+    warning_id: str = ""
+    symbol: str = ""
+    severity: str = "warning"
+    warning_type: str = ""
+    origin: str = ""
+    timestamp_utc: str = ""
+    message: str = ""
+    is_active: bool = True
+
+
+@dataclass(frozen=True)
+class OrderLifecycleSummary:
+    action_side: str = "n/a"
+    lifecycle_state: str = "no_order"
+    lifecycle_source: str = "n/a"
+    event_time_utc: str = ""
+    is_terminal: bool = False
+    display_summary: str = "No recent order lifecycle is available."
+
+
+@dataclass(frozen=True)
+class EvidenceFreshnessState:
+    freshness_label: str = "unavailable"
+    decision_freshness: str = "unavailable"
+    fill_freshness: str = "unavailable"
+    snapshot_freshness: str = "unavailable"
+    runtime_freshness: str = "unavailable"
+    explanation: str = "No current evidence is available."
+
+
+@dataclass(frozen=True)
 class DashboardInstance:
     label: str
     symbols: tuple[str, ...]
@@ -183,6 +232,7 @@ class DashboardInstance:
     last_lifecycle_event: str = ""
     is_fresh_runtime_session: bool = False
     runtime_mode_context: str = ""
+    runtime_lifecycle_events: tuple[LifecycleEvent, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -196,6 +246,8 @@ class MonitorConfiguration:
     tray_enabled: bool = True
     read_only: bool = True
     runtime_registry_path: Path = Path("logs/runtime/runtime_registry.json")
+    runtime_event_limit: int = DEFAULT_RUNTIME_EVENT_LIMIT
+    active_warning_limit: int = DEFAULT_ACTIVE_WARNING_LIMIT
     recent_control_actions: tuple[ManagedControlAction, ...] = ()
     instances: tuple[DashboardInstance, ...] = ()
 
@@ -246,6 +298,12 @@ def safe_read_csv(path: Path, source: str = "csv") -> CsvReadResult:
     try:
         return CsvReadResult(path=path, dataframe=pd.read_csv(path))
     except Exception as exc:
+        try:
+            recovered = pd.read_csv(path, engine="python", on_bad_lines="skip")
+        except Exception:
+            recovered = pd.DataFrame()
+        if not recovered.empty:
+            return CsvReadResult(path=path, dataframe=recovered)
         return CsvReadResult(
             path=path,
             dataframe=pd.DataFrame(),
@@ -266,6 +324,27 @@ def normalize_timestamps(dataframe: pd.DataFrame, column: str = "timestamp") -> 
     normalized = dataframe.copy()
     normalized[column] = pd.to_datetime(normalized[column], errors="coerce", utc=True)
     return normalized.sort_values(column)
+
+
+def _parse_datetime_series(values: pd.Series) -> pd.Series:
+    parsed = pd.to_datetime(values, errors="coerce", utc=True)
+    if parsed.notna().all():
+        return parsed
+    if parsed.isna().any():
+        missing_mask = parsed.isna()
+        missing_values = values[missing_mask]
+        try:
+            reparsed_missing = pd.to_datetime(missing_values, errors="coerce", utc=True, format="mixed")
+        except TypeError:
+            reparsed_missing = missing_values.apply(lambda value: pd.to_datetime(value, errors="coerce", utc=True))
+        parsed.loc[missing_mask] = reparsed_missing
+    if parsed.notna().any():
+        return parsed
+    try:
+        parsed = pd.to_datetime(values, errors="coerce", utc=True, format="mixed")
+    except TypeError:
+        parsed = values.apply(lambda value: pd.to_datetime(value, errors="coerce", utc=True))
+    return parsed
 
 
 def to_float(value: Any, default: float = 0.0) -> float:
@@ -307,6 +386,7 @@ def discover_monitor_instances(
     base_dir: Path = Path("logs"),
     runtime_index: dict[str, ManagedRuntime] | None = None,
     lifecycle_index: dict[str, LifecycleEvent] | None = None,
+    lifecycle_events_by_symbol: dict[str, tuple[LifecycleEvent, ...]] | None = None,
 ) -> tuple[DashboardInstance, ...]:
     if symbols is None and config is not None:
         symbols = config.symbols
@@ -343,6 +423,9 @@ def discover_monitor_instances(
                 runtime_last_seen_utc="" if runtime is None else runtime.last_seen_utc,
                 last_lifecycle_event="" if lifecycle_event is None else lifecycle_event.event_type,
                 is_fresh_runtime_session=bool(runtime and runtime.lifecycle_state in {"starting", "running", "restarting"}),
+                runtime_lifecycle_events=()
+                if lifecycle_events_by_symbol is None
+                else lifecycle_events_by_symbol.get(symbol, ()),
             )
         )
     return tuple(instances)
@@ -350,14 +433,27 @@ def discover_monitor_instances(
 
 def load_runtime_registry_views(
     runtime_registry_path: Path,
-) -> tuple[dict[str, ManagedRuntime], dict[str, LifecycleEvent], tuple[ManagedControlAction, ...], str]:
+) -> tuple[
+    dict[str, ManagedRuntime],
+    dict[str, LifecycleEvent],
+    dict[str, tuple[LifecycleEvent, ...]],
+    tuple[ManagedControlAction, ...],
+    str,
+]:
     try:
         registry = load_runtime_registry(runtime_registry_path)
     except (OSError, ValueError, json.JSONDecodeError):
         registry = empty_runtime_registry()
+    runtime_index = runtime_state_index(registry)
+    lifecycle_index = lifecycle_event_index(registry)
+    lifecycle_events_by_symbol = {
+        symbol: lifecycle_events_for_symbol(registry, symbol)
+        for symbol in runtime_index
+    }
     return (
-        runtime_state_index(registry),
-        lifecycle_event_index(registry),
+        runtime_index,
+        lifecycle_index,
+        lifecycle_events_by_symbol,
         registry.recent_control_actions,
         registry.updated_at_utc,
     )
@@ -375,6 +471,20 @@ def load_monitor_configuration(
     historical_issue_limit = _safe_int(os.getenv("MONITOR_HISTORICAL_ISSUE_LIMIT"), DEFAULT_HISTORY_ISSUE_LIMIT)
     dashboard_host = os.getenv("MONITOR_HOST", "127.0.0.1").strip() or "127.0.0.1"
     tray_enabled = os.getenv("MONITOR_TRAY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    runtime_event_limit = _safe_int(
+        os.getenv(
+            "MONITOR_RUNTIME_EVENT_LIMIT",
+            getattr(config, "monitor_runtime_event_limit", DEFAULT_RUNTIME_EVENT_LIMIT) if config is not None else DEFAULT_RUNTIME_EVENT_LIMIT,
+        ),
+        DEFAULT_RUNTIME_EVENT_LIMIT,
+    )
+    active_warning_limit = _safe_int(
+        os.getenv(
+            "MONITOR_ACTIVE_WARNING_LIMIT",
+            getattr(config, "monitor_active_warning_limit", DEFAULT_ACTIVE_WARNING_LIMIT) if config is not None else DEFAULT_ACTIVE_WARNING_LIMIT,
+        ),
+        DEFAULT_ACTIVE_WARNING_LIMIT,
+    )
     runtime_registry_path = Path(
         os.getenv(
             "RUNTIME_REGISTRY_PATH",
@@ -386,7 +496,9 @@ def load_monitor_configuration(
         for marker in os.getenv("MONITOR_ARCHIVE_MARKERS", ",".join(DEFAULT_ARCHIVE_MARKERS)).split(",")
         if marker.strip()
     ) or DEFAULT_ARCHIVE_MARKERS
-    runtime_index, lifecycle_index, recent_control_actions, _ = load_runtime_registry_views(runtime_registry_path)
+    if config is not None:
+        reconcile_runtime_registry(config, registry_path=runtime_registry_path)
+    runtime_index, lifecycle_index, lifecycle_events_by_symbol, recent_control_actions, _ = load_runtime_registry_views(runtime_registry_path)
     return MonitorConfiguration(
         dashboard_host=dashboard_host,
         dashboard_port=dashboard_port,
@@ -397,6 +509,8 @@ def load_monitor_configuration(
         tray_enabled=tray_enabled,
         read_only=True,
         runtime_registry_path=runtime_registry_path,
+        runtime_event_limit=runtime_event_limit,
+        active_warning_limit=active_warning_limit,
         recent_control_actions=recent_control_actions,
         instances=discover_monitor_instances(
             config=config,
@@ -404,14 +518,89 @@ def load_monitor_configuration(
             base_dir=base_dir,
             runtime_index=runtime_index,
             lifecycle_index=lifecycle_index,
+            lifecycle_events_by_symbol=lifecycle_events_by_symbol,
         ),
     )
 
 
-def _control_availability_for_instance(instance: DashboardInstance, latest_mode: str = "") -> dict[str, Any]:
+def _normalized_runtime_mode_context(instance: DashboardInstance) -> str:
+    return (instance.runtime_mode_context or "").strip().lower()
+
+
+def _managed_runtime_mode_context(
+    instance: DashboardInstance,
+    latest_decision: DecisionSummary | None = None,
+    latest_snapshot: SnapshotSummary | None = None,
+) -> str:
+    runtime_mode = _normalized_runtime_mode_context(instance)
+    if runtime_mode in {"live", "paper"}:
+        return runtime_mode
+    latest_mode = (latest_decision.mode if latest_decision is not None else "") or (
+        latest_snapshot.mode if latest_snapshot is not None else ""
+    )
+    latest_mode = latest_mode.strip().lower()
+    if latest_mode in {"active-live", "live"}:
+        return "live"
+    if latest_mode == "paper":
+        return "paper"
+    return runtime_mode
+
+
+def _runtime_truth_instances(
+    instances: tuple[DashboardInstance, ...],
+    *,
+    config: BotConfig,
+) -> tuple[tuple[DashboardInstance, ...], tuple[ManagedControlAction, ...]]:
+    registry = reconcile_runtime_registry(config)
+    runtime_index = runtime_state_index(registry)
+    lifecycle_index = lifecycle_event_index(registry)
+    lifecycle_events_by_symbol = {
+        symbol: lifecycle_events_for_symbol(registry, symbol)
+        for symbol in runtime_index
+    }
+    enriched: list[DashboardInstance] = []
+    for instance in instances:
+        symbol = instance.symbols[0] if instance.symbols else instance.label
+        runtime = runtime_index.get(symbol)
+        lifecycle_event = lifecycle_index.get(symbol)
+        if runtime is None:
+            enriched.append(instance)
+            continue
+        enriched.append(
+            DashboardInstance(
+                **{
+                    **instance.__dict__,
+                    "runtime_state": runtime.lifecycle_state,
+                    "runtime_status_message": runtime.failure_reason
+                    or (lifecycle_event.message if lifecycle_event is not None else instance.runtime_status_message),
+                    "runtime_session_id": runtime.session_id,
+                    "runtime_pid": runtime.pid,
+                    "runtime_started_at_utc": runtime.started_at_utc,
+                    "runtime_last_seen_utc": runtime.last_seen_utc,
+                    "last_lifecycle_event": "" if lifecycle_event is None else lifecycle_event.event_type,
+                    "is_fresh_runtime_session": runtime.lifecycle_state in {"starting", "running", "restarting"},
+                    "runtime_mode_context": runtime.mode or instance.runtime_mode_context,
+                    "runtime_lifecycle_events": lifecycle_events_by_symbol.get(symbol, ()),
+                }
+            )
+        )
+    return tuple(enriched), registry.recent_control_actions
+
+
+def _control_availability_for_instance(
+    instance: DashboardInstance,
+    latest_mode: str = "",
+    *,
+    config: BotConfig | None = None,
+) -> dict[str, Any]:
     runtime_state = (instance.runtime_state or "").strip().lower()
     asset_class = instance.asset_classes[0] if instance.asset_classes else infer_asset_class(instance.label)
-    mode_context = (instance.runtime_mode_context or latest_mode or "").strip().lower()
+    configured_mode = ""
+    if config is not None:
+        configured_mode = "paper" if config.paper else "live"
+    mode_context = (instance.runtime_mode_context or latest_mode or configured_mode or "").strip().lower()
+    if runtime_state in {"stopped", "failed", "paused", "unmanaged", ""} and configured_mode:
+        mode_context = configured_mode
 
     if runtime_state in {"starting", "stopping", "restarting"}:
         return {
@@ -422,7 +611,7 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
             "can_stop": False,
             "can_restart": False,
             "control_availability_message": f"Runtime is currently {runtime_state}.",
-            "requires_live_confirmation": mode_context == "live",
+            "requires_live_confirmation": False,
         }
     if runtime_state == "running":
         return {
@@ -433,7 +622,7 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
             "can_stop": True,
             "can_restart": True,
             "control_availability_message": "Runtime is currently running.",
-            "requires_live_confirmation": mode_context == "live",
+            "requires_live_confirmation": False,
         }
     if runtime_state in {"failed", "paused", "stopped"}:
         message = {
@@ -449,7 +638,7 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
             "can_stop": False,
             "can_restart": True,
             "control_availability_message": message,
-            "requires_live_confirmation": mode_context == "live",
+            "requires_live_confirmation": False,
         }
     return {
         "control_asset_class": asset_class,
@@ -459,7 +648,7 @@ def _control_availability_for_instance(instance: DashboardInstance, latest_mode:
         "can_stop": False,
         "can_restart": False,
         "control_availability_message": "No active managed runtime is registered.",
-        "requires_live_confirmation": mode_context == "live",
+        "requires_live_confirmation": False,
     }
 
 
@@ -470,19 +659,14 @@ def _confirmation_state_for_request(
     requested_action: str,
     provided_confirmation: str,
 ) -> tuple[str, str]:
+    del config
     normalized_mode = (mode_context or "").strip().lower()
     normalized_action = (requested_action or "").strip().lower()
-    confirmation = (provided_confirmation or "").strip()
+    del provided_confirmation
     live_actions = {"start", "restart"}
     if normalized_mode != "live" or normalized_action not in live_actions:
         return "not_required", ""
-    if confirmation == config.live_confirmation_token:
-        return "confirmed", ""
-    token_hint = config.live_confirmation_token or "CONFIRM"
-    return (
-        "missing_confirmation" if not confirmation else "invalid_confirmation",
-        f"Live {normalized_action} requires confirmation. Enter {token_hint} to continue.",
-    )
+    return "dashboard_session_trusted", ""
 
 
 def _blocked_control_action(
@@ -530,6 +714,307 @@ def _control_action_to_dict(action: ManagedControlAction) -> dict[str, Any]:
     }
 
 
+def _runtime_event_to_dict(event: RuntimeEventEntry) -> dict[str, Any]:
+    return {
+        "event_id": event.event_id,
+        "symbol": event.symbol,
+        "timestamp_utc": event.timestamp_utc,
+        "mode_context": event.mode_context,
+        "runtime_phase": event.runtime_phase,
+        "event_source": event.event_source,
+        "summary": event.summary,
+        "runtime_session_id": event.runtime_session_id,
+    }
+
+
+def _warning_event_to_dict(event: WarningEvent) -> dict[str, Any]:
+    return {
+        "warning_id": event.warning_id,
+        "symbol": event.symbol,
+        "severity": event.severity,
+        "warning_type": event.warning_type,
+        "origin": event.origin,
+        "timestamp_utc": event.timestamp_utc,
+        "message": event.message,
+        "is_active": event.is_active,
+    }
+
+
+def _order_lifecycle_to_dict(summary: OrderLifecycleSummary) -> dict[str, Any]:
+    return {
+        "action_side": summary.action_side,
+        "lifecycle_state": summary.lifecycle_state,
+        "lifecycle_source": summary.lifecycle_source,
+        "event_time_utc": summary.event_time_utc,
+        "is_terminal": summary.is_terminal,
+        "display_summary": summary.display_summary,
+    }
+
+
+def _freshness_bucket(timestamp_value: str | None, *, stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES) -> str:
+    timestamp = _parse_instance_timestamp(timestamp_value)
+    if timestamp is None:
+        return "unavailable"
+    age = _age_minutes(timestamp)
+    if age is not None and age > stale_after_minutes:
+        return "stale"
+    return "current"
+
+
+def _runtime_events_for_instance(
+    instance: DashboardInstance,
+    decisions: pd.DataFrame,
+    fills: pd.DataFrame,
+    latest_decision: DecisionSummary,
+    latest_fill: FillSummary,
+    *,
+    limit: int = DEFAULT_RUNTIME_EVENT_LIMIT,
+) -> tuple[RuntimeEventEntry, ...]:
+    events: list[RuntimeEventEntry] = []
+    def lifecycle_value(event: LifecycleEvent | dict[str, Any], field_name: str) -> str:
+        if isinstance(event, dict):
+            return _clean_value(event.get(field_name, ""))
+        return _clean_value(getattr(event, field_name, ""))
+
+    for event in instance.runtime_lifecycle_events:
+        session_id = lifecycle_value(event, "session_id")
+        event_type = lifecycle_value(event, "event_type")
+        timestamp_utc = lifecycle_value(event, "timestamp_utc")
+        symbol = lifecycle_value(event, "symbol") or instance.label
+        message = lifecycle_value(event, "message")
+        events.append(
+            RuntimeEventEntry(
+                event_id=f"{instance.label}-runtime-{session_id or event_type or 'event'}-{timestamp_utc}",
+                symbol=symbol,
+                timestamp_utc=timestamp_utc,
+                mode_context=instance.runtime_mode_context or latest_decision.mode or "",
+                runtime_phase=event_type or instance.last_lifecycle_event or instance.runtime_state or "runtime",
+                event_source="runtime_manager",
+                summary=message or instance.runtime_status_message or instance.status.message,
+                runtime_session_id=session_id or instance.runtime_session_id,
+            )
+        )
+    if not instance.runtime_lifecycle_events and (instance.last_lifecycle_event or instance.runtime_status_message):
+        events.append(
+            RuntimeEventEntry(
+                event_id=f"{instance.label}-runtime-{instance.runtime_session_id or instance.last_lifecycle_event or 'event'}",
+                symbol=instance.label,
+                timestamp_utc=instance.runtime_last_seen_utc or instance.runtime_started_at_utc or instance.last_updated_at or "",
+                mode_context=instance.runtime_mode_context or latest_decision.mode or "",
+                runtime_phase=instance.last_lifecycle_event or instance.runtime_state or "runtime",
+                event_source="runtime_manager",
+                summary=instance.runtime_status_message or instance.status.message,
+                runtime_session_id=instance.runtime_session_id,
+            )
+        )
+
+    if not fills.empty:
+        recent_fill_rows = fills.tail(limit).to_dict(orient="records")
+        for row in recent_fill_rows:
+            side = str(row.get("side", "")).strip().lower() or "order"
+            result = str(row.get("result", "")).strip().lower() or "fill_event"
+            quantity = _clean_value(row.get("quantity")) or "?"
+            events.append(
+                RuntimeEventEntry(
+                    event_id=f"{instance.label}-fill-{_clean_value(row.get('order_id')) or _clean_value(row.get('timestamp'))}",
+                    symbol=_clean_value(row.get("symbol")) or instance.label,
+                    timestamp_utc=_clean_value(row.get("timestamp")),
+                    mode_context=_clean_value(row.get("mode")) or instance.runtime_mode_context or "",
+                    runtime_phase=result,
+                    event_source="fill_log",
+                    summary=f"{side} {quantity} {result}".strip(),
+                    runtime_session_id=instance.runtime_session_id,
+                )
+            )
+    elif latest_fill.timestamp:
+        events.append(
+            RuntimeEventEntry(
+                event_id=f"{instance.label}-fill-{latest_fill.order_id or latest_fill.timestamp}",
+                symbol=instance.label,
+                timestamp_utc=latest_fill.timestamp,
+                mode_context=latest_fill.mode or instance.runtime_mode_context or "",
+                runtime_phase=(latest_fill.result or "fill").strip().lower() or "fill",
+                event_source="fill_log",
+                summary=f"{(latest_fill.side or 'order').strip().lower()} {latest_fill.result or 'event'}".strip(),
+                runtime_session_id=instance.runtime_session_id,
+            )
+        )
+
+    if not decisions.empty:
+        recent_decision_rows = decisions.tail(limit).to_dict(orient="records")
+        for row in recent_decision_rows:
+            action = str(row.get("action", "")).strip().lower() or "decision"
+            result = str(row.get("result", "")).strip().lower() or action
+            reason = _clean_value(row.get("reason")) or ""
+            events.append(
+                RuntimeEventEntry(
+                    event_id=f"{instance.label}-decision-{_clean_value(row.get('timestamp'))}-{action}",
+                    symbol=_clean_value(row.get("symbol")) or instance.label,
+                    timestamp_utc=_clean_value(row.get("timestamp")),
+                    mode_context=_clean_value(row.get("mode")) or instance.runtime_mode_context or "",
+                    runtime_phase=result,
+                    event_source="decision_log",
+                    summary=reason or f"{action} {result}".strip(),
+                    runtime_session_id=instance.runtime_session_id,
+                )
+            )
+    elif latest_decision.timestamp:
+        events.append(
+            RuntimeEventEntry(
+                event_id=f"{instance.label}-decision-{latest_decision.timestamp}",
+                symbol=instance.label,
+                timestamp_utc=latest_decision.timestamp,
+                mode_context=latest_decision.mode or instance.runtime_mode_context or "",
+                runtime_phase=(latest_decision.result or latest_decision.action or "decision").strip().lower() or "decision",
+                event_source="decision_log",
+                summary=latest_decision.reason or f"{latest_decision.action or 'decision'} {latest_decision.result or ''}".strip(),
+                runtime_session_id=instance.runtime_session_id,
+            )
+        )
+
+    deduped: dict[tuple[str, str, str], RuntimeEventEntry] = {}
+    for event in events:
+        if not (event.timestamp_utc or event.summary):
+            continue
+        key = (event.event_source, event.timestamp_utc, event.summary)
+        deduped[key] = event
+    events = list(deduped.values())
+    events.sort(key=lambda event: _parse_instance_timestamp(event.timestamp_utc) or pd.Timestamp.min.tz_localize("UTC"), reverse=True)
+    return tuple(events[:limit])
+
+
+def _warning_events_for_instance(
+    instance: DashboardInstance,
+    *,
+    limit: int = DEFAULT_ACTIVE_WARNING_LIMIT,
+) -> tuple[WarningEvent, ...]:
+    warnings = []
+    runtime_state = (instance.runtime_state or "").strip().lower()
+    if runtime_state in {"failed", "blocked", "paused"}:
+        warnings.append(
+            WarningEvent(
+                warning_id=f"{instance.label}-runtime-{runtime_state}",
+                symbol=instance.label,
+                severity="critical" if runtime_state in {"failed", "blocked"} else "warning",
+                warning_type=f"runtime_{runtime_state}",
+                origin="runtime_manager",
+                timestamp_utc=instance.runtime_last_seen_utc or instance.runtime_started_at_utc or _utc_now_iso(),
+                message=instance.runtime_status_message or instance.status.message,
+                is_active=True,
+            )
+        )
+    warnings.extend(
+        [
+        WarningEvent(
+            warning_id=f"{instance.label}-{issue.category}-{index}",
+            symbol=instance.label,
+            severity=issue.severity,
+            warning_type=issue.category,
+            origin=issue.source,
+            timestamp_utc=issue.timestamp,
+            message=issue.message,
+            is_active=True,
+        )
+        for index, issue in enumerate(instance.issues, start=1)
+        ]
+    )
+    warnings.sort(
+        key=lambda event: _parse_instance_timestamp(event.timestamp_utc) or pd.Timestamp.min.tz_localize("UTC"),
+        reverse=True,
+    )
+    return tuple(warnings[:limit])
+
+
+def _latest_order_lifecycle_for_instance(
+    latest_decision: DecisionSummary,
+    latest_fill: FillSummary,
+) -> OrderLifecycleSummary:
+    fill_state = (latest_fill.result or "").strip().lower()
+    if latest_fill.timestamp:
+        terminal = fill_state in {"filled", "rejected", "canceled"}
+        state = fill_state or "fill_event"
+        side = (latest_fill.side or "n/a").strip().lower() or "n/a"
+        return OrderLifecycleSummary(
+            action_side=side,
+            lifecycle_state=state,
+            lifecycle_source="fill_log",
+            event_time_utc=latest_fill.timestamp,
+            is_terminal=terminal,
+            display_summary=f"{side} order {state}".strip(),
+        )
+    decision_state = (latest_decision.result or "").strip().lower()
+    decision_action = (latest_decision.action or "").strip().lower()
+    if latest_decision.timestamp and decision_action in {"buy", "sell"}:
+        state = decision_state or "submitted"
+        return OrderLifecycleSummary(
+            action_side=decision_action,
+            lifecycle_state=state,
+            lifecycle_source="decision_log",
+            event_time_utc=latest_decision.timestamp,
+            is_terminal=state in {"filled", "rejected", "canceled"},
+            display_summary=f"{decision_action} order {state}".strip(),
+        )
+    return OrderLifecycleSummary()
+
+
+def _freshness_state_for_instance(
+    instance: DashboardInstance,
+    latest_decision: DecisionSummary,
+    latest_fill: FillSummary,
+    latest_snapshot: SnapshotSummary,
+    *,
+    is_provisional: bool,
+    held_value_source: str = VALUE_SOURCE_UNAVAILABLE,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
+) -> EvidenceFreshnessState:
+    if instance.evidence_scope == "historical":
+        return EvidenceFreshnessState(
+            freshness_label="historical",
+            decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+            fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+            snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+            runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+            explanation="This symbol currently reflects historical evidence outside the active monitor window.",
+        )
+    if instance.status.state == "no_data":
+        return EvidenceFreshnessState(explanation="No current runtime evidence is available for this symbol.")
+    if instance.status.state == "stale":
+        return EvidenceFreshnessState(
+            freshness_label="stale",
+            decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+            fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+            snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+            runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+            explanation=instance.status.message,
+        )
+    if is_provisional:
+        return EvidenceFreshnessState(
+            freshness_label="provisional",
+            decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+            fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+            snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+            runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+            explanation="Portfolio values are temporarily derived from fresher fill evidence than the latest snapshot.",
+        )
+    if held_value_source == VALUE_SOURCE_UNAVAILABLE and to_float(latest_snapshot.position_qty) > 0:
+        return EvidenceFreshnessState(
+            freshness_label="unavailable",
+            decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+            fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+            snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+            runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+            explanation="Current runtime evidence is available, but symbol-local portfolio value is waiting on a confirmed fill or snapshot update.",
+        )
+    return EvidenceFreshnessState(
+        freshness_label="current",
+        decision_freshness=_freshness_bucket(latest_decision.timestamp, stale_after_minutes=stale_after_minutes),
+        fill_freshness=_freshness_bucket(latest_fill.timestamp, stale_after_minutes=stale_after_minutes),
+        snapshot_freshness=_freshness_bucket(latest_snapshot.timestamp, stale_after_minutes=stale_after_minutes),
+        runtime_freshness=_freshness_bucket(instance.runtime_last_seen_utc, stale_after_minutes=stale_after_minutes),
+        explanation="Current monitor evidence is aligned with the latest active runtime state.",
+    )
+
+
 def _load_recent_control_actions(
     *,
     config: BotConfig | None = None,
@@ -547,7 +1032,7 @@ def _load_recent_control_actions(
                 config.runtime_registry_path if config is not None else "logs/runtime/runtime_registry.json",
             )
         )
-        _, _, actions, updated_at_utc = load_runtime_registry_views(registry_path)
+        _, _, _, actions, updated_at_utc = load_runtime_registry_views(registry_path)
     effective_limit = max(1, limit)
     if config is not None:
         effective_limit = max(1, int(config.runtime_recent_control_actions_limit))
@@ -892,11 +1377,11 @@ def _normalize_snapshot_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
     normalized = dataframe.copy()
     if "timestamp" not in normalized.columns:
         if "date" in normalized.columns:
-            normalized["timestamp"] = pd.to_datetime(normalized["date"], errors="coerce", utc=True)
+            normalized["timestamp"] = _parse_datetime_series(normalized["date"])
         else:
             normalized["timestamp"] = pd.NaT
     else:
-        normalized["timestamp"] = pd.to_datetime(normalized["timestamp"], errors="coerce", utc=True)
+        normalized["timestamp"] = _parse_datetime_series(normalized["timestamp"])
     return normalized.sort_values("timestamp")
 
 
@@ -1017,15 +1502,17 @@ def _select_authoritative_account_instance(
     for instance in instances:
         snapshot = instance.latest_snapshot
         snapshot_ts = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
+        fill = instance.latest_fill
+        fill_ts = _parse_instance_timestamp(fill.timestamp if fill is not None else None)
         last_update_ts = _parse_instance_timestamp(instance.last_updated_at)
-        if snapshot_ts is not None:
-            fallback_candidates.append((snapshot_ts, instance))
-            if snapshot_ts >= cutoff:
-                candidates.append((snapshot_ts, instance))
-        elif last_update_ts is not None:
-            fallback_candidates.append((last_update_ts, instance))
-            if last_update_ts >= cutoff:
-                candidates.append((last_update_ts, instance))
+        evidence_ts = max(
+            [timestamp for timestamp in (fill_ts, snapshot_ts, last_update_ts) if timestamp is not None],
+            default=None,
+        )
+        if evidence_ts is not None:
+            fallback_candidates.append((evidence_ts, instance))
+            if evidence_ts >= cutoff:
+                candidates.append((evidence_ts, instance))
     ranked = candidates or fallback_candidates
     if not ranked:
         return instances[0]
@@ -1036,6 +1523,8 @@ def _select_authoritative_account_instance(
 def _value_evidence(
     snapshot: SnapshotSummary | None,
     fill: FillSummary | None,
+    *,
+    allow_snapshot_delta: bool = True,
 ) -> tuple[float, float, str]:
     position_qty = to_float(snapshot.position_qty if snapshot is not None else None)
     fill_qty = to_float(fill.quantity if fill is not None else None)
@@ -1043,6 +1532,9 @@ def _value_evidence(
     if fill_qty > 0 and fill_notional > 0:
         unit_value = fill_notional / fill_qty
         return unit_value, position_qty * unit_value, VALUE_SOURCE_FILL
+
+    if not allow_snapshot_delta:
+        return 0.0, 0.0, VALUE_SOURCE_UNAVAILABLE
 
     portfolio_value = to_float(snapshot.portfolio_value if snapshot is not None else None)
     cash = to_float(snapshot.cash if snapshot is not None else None)
@@ -1054,6 +1546,104 @@ def _value_evidence(
     return 0.0, 0.0, VALUE_SOURCE_UNAVAILABLE
 
 
+def _effective_portfolio_state(
+    snapshot: SnapshotSummary | None,
+    fill: FillSummary | None,
+    *,
+    allow_snapshot_delta: bool = True,
+) -> dict[str, Any]:
+    snapshot_qty = to_float(snapshot.position_qty if snapshot is not None else None)
+    snapshot_cash = to_float(snapshot.cash if snapshot is not None else None)
+    snapshot_portfolio = to_float(snapshot.portfolio_value if snapshot is not None else None)
+    snapshot_timestamp = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
+
+    fill_timestamp = _parse_instance_timestamp(fill.timestamp if fill is not None else None)
+    fill_result = (fill.result if fill is not None else "").strip().lower()
+    fill_side = (fill.side if fill is not None else "").strip().lower()
+    fill_qty = to_float(fill.quantity if fill is not None else None)
+    fill_cash = to_float(fill.cash if fill is not None else None)
+    fill_portfolio = to_float(fill.portfolio_value if fill is not None else None)
+    fill_notional = to_float(fill.notional_usd if fill is not None else None)
+
+    display_qty = snapshot_qty
+    display_cash = snapshot_cash
+    display_portfolio = snapshot_portfolio
+    value_source = VALUE_SOURCE_UNAVAILABLE
+
+    if fill_timestamp is not None and (snapshot_timestamp is None or fill_timestamp > snapshot_timestamp) and fill_result == "filled":
+        if fill_side == "buy" and fill_qty > 0:
+            display_qty = snapshot_qty + fill_qty
+        elif fill_side == "sell" and fill_qty > 0:
+            display_qty = max(snapshot_qty - fill_qty, 0.0)
+        if fill_cash > 0:
+            display_cash = fill_cash
+        if fill_portfolio > 0:
+            display_portfolio = fill_portfolio
+        if fill_qty > 0 and fill_notional > 0 and display_qty > 0:
+            unit_value = fill_notional / fill_qty
+            return {
+                "position_qty": display_qty,
+                "cash": display_cash,
+                "portfolio_value": display_portfolio,
+                "held_value": display_qty * unit_value,
+                "held_value_estimate": display_qty * unit_value,
+                "held_value_source": VALUE_SOURCE_FILL_DELTA,
+                "latest_fill_price": unit_value,
+                "is_provisional": True,
+            }
+
+    latest_fill_price, held_value_estimate, held_value_source = _value_evidence(
+        snapshot,
+        fill,
+        allow_snapshot_delta=allow_snapshot_delta,
+    )
+    held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
+    return {
+        "position_qty": display_qty,
+        "cash": display_cash,
+        "portfolio_value": display_portfolio,
+        "held_value": held_value,
+        "held_value_estimate": held_value_estimate,
+        "held_value_source": held_value_source,
+        "latest_fill_price": latest_fill_price,
+        "is_provisional": False,
+    }
+
+
+def _effective_account_state(
+    snapshot: SnapshotSummary | None,
+    fill: FillSummary | None,
+) -> dict[str, Any]:
+    snapshot_cash = to_float(snapshot.cash if snapshot is not None else None)
+    snapshot_portfolio = to_float(snapshot.portfolio_value if snapshot is not None else None)
+    snapshot_timestamp = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
+
+    fill_timestamp = _parse_instance_timestamp(fill.timestamp if fill is not None else None)
+    fill_result = (fill.result if fill is not None else "").strip().lower()
+    fill_cash = to_float(fill.cash if fill is not None else None)
+    fill_portfolio = to_float(fill.portfolio_value if fill is not None else None)
+
+    is_provisional = False
+    account_cash = snapshot_cash
+    account_equity = snapshot_portfolio
+    source = "snapshot"
+
+    if fill_timestamp is not None and (snapshot_timestamp is None or fill_timestamp > snapshot_timestamp) and fill_result == "filled":
+        if fill_cash > 0:
+            account_cash = fill_cash
+        if fill_portfolio > 0:
+            account_equity = fill_portfolio
+        is_provisional = True
+        source = VALUE_SOURCE_FILL_DELTA
+
+    return {
+        "cash": account_cash,
+        "account_equity": account_equity,
+        "is_provisional": is_provisional,
+        "source": source,
+    }
+
+
 def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
     if timestamp is None or pd.isna(timestamp):
         return None
@@ -1063,12 +1653,14 @@ def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
 def _classify_status(
     instance: DashboardInstance,
     latest_decision: DecisionSummary | None,
+    latest_snapshot: SnapshotSummary | None,
     issues: list[IssueSummary],
     age_minutes: float | None,
     stale_after_minutes: int,
 ) -> RuntimeStatus:
     runtime_state = instance.runtime_state
     runtime_message = instance.runtime_status_message or "Runtime state updated by runtime manager."
+    runtime_mode = _managed_runtime_mode_context(instance, latest_decision, latest_snapshot)
     if runtime_state == "failed":
         return RuntimeStatus("failed", "critical", runtime_message, age_minutes)
     if runtime_state == "blocked":
@@ -1080,14 +1672,22 @@ def _classify_status(
     if runtime_state == "stopping":
         return RuntimeStatus("stopped", "warning", runtime_message, age_minutes)
     if runtime_state in {"starting", "restarting"}:
+        if runtime_mode == "live":
+            return RuntimeStatus("live", "info", runtime_message or "Managed live runtime is starting.", age_minutes)
+        if runtime_mode == "paper":
+            return RuntimeStatus("paper", "info", runtime_message or "Managed paper runtime is starting.", age_minutes)
         return RuntimeStatus("running", "info", runtime_message, age_minutes)
 
     if latest_decision is None:
         if runtime_state == "running":
+            if runtime_mode == "live":
+                return RuntimeStatus("live", "ok", runtime_message or "Managed live runtime is running.", age_minutes)
+            if runtime_mode == "paper":
+                return RuntimeStatus("paper", "info", runtime_message or "Managed paper runtime is running.", age_minutes)
             return RuntimeStatus("running", "info", runtime_message, age_minutes)
         return RuntimeStatus("no_data", "warning", "No runtime evidence found.", age_minutes)
-    live_like = latest_decision.mode in {"active-live", "live"}
-    paper_like = latest_decision.mode == "paper"
+    live_like = latest_decision.mode in {"active-live", "live"} or runtime_mode == "live"
+    paper_like = latest_decision.mode == "paper" or runtime_mode == "paper"
     if runtime_state == "running":
         if live_like:
             return RuntimeStatus("live", "ok", runtime_message or "Managed live runtime is running.", age_minutes)
@@ -1157,11 +1757,17 @@ def _issues_from_evidence(
     stale_after_minutes: int,
     *,
     evidence_scope: str = "active",
+    runtime_state: str = "",
 ) -> list[IssueSummary]:
     issues: list[IssueSummary] = []
     if evidence_scope != "historical":
         issues.extend(result.issue for result in read_results if result.issue is not None)
-    if evidence_scope != "historical" and age_minutes is not None and age_minutes > stale_after_minutes:
+    if (
+        evidence_scope != "historical"
+        and runtime_state not in {"stopped", "stopping"}
+        and age_minutes is not None
+        and age_minutes > stale_after_minutes
+    ):
         issues.append(
             IssueSummary(
                 timestamp=_utc_now_iso(),
@@ -1212,9 +1818,23 @@ def _notes_from_evidence(
     decisions: pd.DataFrame,
     fills: pd.DataFrame,
     snapshot: pd.DataFrame,
+    *,
+    runtime_state: str = "",
+    age_minutes: float | None = None,
+    stale_after_minutes: int = DEFAULT_STALE_AFTER_MINUTES,
 ) -> list[NoteSummary]:
     del decisions, fills
     notes: list[NoteSummary] = []
+    if runtime_state in {"stopped", "failed"} and age_minutes is not None and age_minutes > stale_after_minutes:
+        notes.append(
+            NoteSummary(
+                timestamp=_utc_now_iso(),
+                symbol="SYSTEM",
+                category="historical_runtime_evidence",
+                message="Historical evidence below is from the most recent managed runtime session.",
+                source="monitor",
+            )
+        )
     if not snapshot.empty:
         recent_snapshot = snapshot.tail(5).to_dict(orient="records")
         for row in recent_snapshot:
@@ -1289,6 +1909,7 @@ def summarize_instance(
         age,
         stale_after_minutes,
         evidence_scope=evidence_scope,
+        runtime_state=instance.runtime_state,
     )
     historical_issues = _historical_issues_from_evidence(
         (decision_result, fill_result, snapshot_result),
@@ -1299,8 +1920,15 @@ def summarize_instance(
         evidence_scope=evidence_scope,
         historical_issue_limit=historical_issue_limit,
     )
-    notes = _notes_from_evidence(active_decisions, active_fills, active_snapshot)
-    status = _classify_status(instance, latest_decision, issues, age, stale_after_minutes)
+    notes = _notes_from_evidence(
+        active_decisions,
+        active_fills,
+        active_snapshot,
+        runtime_state=instance.runtime_state,
+        age_minutes=age,
+        stale_after_minutes=stale_after_minutes,
+    )
+    status = _classify_status(instance, latest_decision, latest_snapshot, issues, age, stale_after_minutes)
     return DashboardInstance(
         label=instance.label,
         symbols=instance.symbols,
@@ -1326,13 +1954,20 @@ def summarize_instance(
         last_lifecycle_event=instance.last_lifecycle_event,
         is_fresh_runtime_session=instance.is_fresh_runtime_session,
         runtime_mode_context=instance.runtime_mode_context,
+        runtime_lifecycle_events=instance.runtime_lifecycle_events,
     )
 
 
-def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None = None) -> dict[str, Any]:
+def _instance_payload(
+    instance: DashboardInstance,
+    *,
+    config: BotConfig | None = None,
+    active_instance_count: int = 1,
+) -> dict[str, Any]:
     latest_decision = instance.latest_decision or DecisionSummary()
     latest_fill = instance.latest_fill or FillSummary()
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
+    effective_mode = _managed_runtime_mode_context(instance, latest_decision, latest_snapshot) or "unknown"
     decisions = normalize_timestamps(safe_read_csv(instance.decision_log_path, source="decisions").dataframe)
     fills = normalize_timestamps(safe_read_csv(instance.fill_log_path, source="fills").dataframe)
     snapshot = _normalize_snapshot_frame(safe_read_csv(instance.snapshot_log_path, source="snapshot").dataframe)
@@ -1360,8 +1995,11 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
             actions_7d[action] = int(counts.get(action, 0))
     recent_decisions = _recent_rows(decisions)
     recent_fills = _recent_rows(fills)
-    latest_fill_price, held_value_estimate, held_value_source = _value_evidence(latest_snapshot, latest_fill)
-    held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
+    effective_portfolio = _effective_portfolio_state(
+        latest_snapshot,
+        latest_fill,
+        allow_snapshot_delta=active_instance_count <= 1,
+    )
     sentiment_summary = _latest_sentiment_summary(decisions) or latest_decision
     current_sentiment = _sentiment_snapshot(sentiment_summary)
     headline_preview = _headline_evidence_preview(sentiment_summary)
@@ -1375,21 +2013,47 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
             result = str(row.get("result", ""))
             if result in {"rejected", "canceled"} or reason.startswith("broker_"):
                 broker_rejection_count += 1
-    control_availability = _control_availability_for_instance(instance, latest_decision.mode or latest_snapshot.mode)
+    control_availability = _control_availability_for_instance(
+        instance,
+        effective_mode,
+        config=config,
+    )
+    runtime_event_limit = getattr(config, "monitor_runtime_event_limit", DEFAULT_RUNTIME_EVENT_LIMIT) if config is not None else DEFAULT_RUNTIME_EVENT_LIMIT
+    active_warning_limit = getattr(config, "monitor_active_warning_limit", DEFAULT_ACTIVE_WARNING_LIMIT) if config is not None else DEFAULT_ACTIVE_WARNING_LIMIT
+    recent_runtime_events = _runtime_events_for_instance(
+        instance,
+        decisions,
+        fills,
+        latest_decision,
+        latest_fill,
+        limit=runtime_event_limit,
+    )
+    active_warnings = _warning_events_for_instance(instance, limit=active_warning_limit)
+    latest_order_lifecycle = _latest_order_lifecycle_for_instance(latest_decision, latest_fill)
+    freshness_state = _freshness_state_for_instance(
+        instance,
+        latest_decision,
+        latest_fill,
+        latest_snapshot,
+        is_provisional=effective_portfolio["is_provisional"],
+        held_value_source=effective_portfolio["held_value_source"],
+    )
     return {
         "label": instance.label,
         "status": _status_to_dict(instance.status),
         "status_state": instance.status.state,
         "status_severity": instance.status.severity,
+        "status_reason": instance.status.message,
         "symbols": list(instance.symbols),
         "asset_classes": list(instance.asset_classes),
         "latest_action": latest_decision.action or "n/a",
         "latest_reason": latest_decision.reason or instance.status.message,
-        "latest_mode": latest_decision.mode or "unknown",
+        "latest_mode": effective_mode,
         "latest_asset_class": latest_decision.asset_class or (instance.asset_classes[0] if instance.asset_classes else "unknown"),
         "latest_source": latest_decision.action_source or "n/a",
         "latest_update_utc": instance.last_updated_at,
         "runtime_state": instance.runtime_state,
+        "runtime_mode_context": effective_mode,
         "runtime_status_message": instance.runtime_status_message,
         "runtime_session_id": instance.runtime_session_id,
         "runtime_pid": instance.runtime_pid,
@@ -1406,13 +2070,9 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         "control_availability_message": control_availability["control_availability_message"],
         "requires_live_confirmation": control_availability["requires_live_confirmation"],
         "control_confirmation_hint": (
-            f"Enter {config.live_confirmation_token} before live start or restart."
-            if control_availability["requires_live_confirmation"] and config is not None
-            else (
-                "Live start and restart require explicit confirmation."
-                if control_availability["requires_live_confirmation"]
-                else "Paper controls do not require live confirmation."
-            )
+            "Live controls use this trusted local dashboard session."
+            if control_availability["control_mode_context"] == "live"
+            else "Paper controls are available from the dashboard."
         ),
         "last_decision_utc": latest_decision.timestamp or "",
         "last_fill_utc": latest_fill.timestamp or "",
@@ -1440,15 +2100,21 @@ def _instance_payload(instance: DashboardInstance, *, config: BotConfig | None =
         "evidence_scope": instance.evidence_scope,
         "historical_issue_count": len(instance.historical_issues),
         "historical_issues": [_issue_to_dict(issue) for issue in instance.historical_issues],
-        "account_equity": to_float(latest_snapshot.portfolio_value),
-        "portfolio_value": to_float(latest_snapshot.portfolio_value),
-        "cash": to_float(latest_snapshot.cash),
+        "account_equity": effective_portfolio["portfolio_value"],
+        "portfolio_value": effective_portfolio["portfolio_value"],
+        "cash": effective_portfolio["cash"],
         "day_pnl": to_float(latest_snapshot.day_pnl),
-        "position_qty": to_float(latest_snapshot.position_qty),
-        "held_value": held_value,
-        "held_value_estimate": held_value_estimate,
-        "held_value_source": held_value_source,
-        "latest_fill_price": latest_fill_price,
+        "position_qty": effective_portfolio["position_qty"],
+        "held_value": effective_portfolio["held_value"],
+        "held_value_estimate": effective_portfolio["held_value_estimate"],
+        "held_value_source": effective_portfolio["held_value_source"],
+        "latest_fill_price": effective_portfolio["latest_fill_price"],
+        "portfolio_is_provisional": effective_portfolio["is_provisional"],
+        "recent_runtime_events": [_runtime_event_to_dict(event) for event in recent_runtime_events],
+        "active_warnings": [_warning_event_to_dict(event) for event in active_warnings],
+        "latest_order_lifecycle": _order_lifecycle_to_dict(latest_order_lifecycle),
+        "freshness_state": freshness_state.freshness_label,
+        "freshness_explanation": freshness_state.explanation,
         "decisions_today": decisions_today,
         "fills_today": fills_today,
         "equity_points": equity_points,
@@ -1516,13 +2182,14 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
             "is_stale": True,
         }
     snapshot = freshest.latest_snapshot or SnapshotSummary()
+    effective_account = _effective_account_state(snapshot, freshest.latest_fill)
     latest_update = snapshot.timestamp or freshest.last_updated_at or ""
     latest_update_ts = _parse_instance_timestamp(latest_update)
     is_stale = True if latest_update_ts is None else (_age_minutes(latest_update_ts) or 0.0) > DEFAULT_STALE_AFTER_MINUTES
     instances_with_fills = sum(1 for instance in active_instances if instance.latest_fill is not None)
     return {
-        "account_equity": to_float(snapshot.portfolio_value),
-        "cash": to_float(snapshot.cash),
+        "account_equity": effective_account["account_equity"],
+        "cash": effective_account["cash"],
         "day_pnl": to_float(snapshot.day_pnl),
         "active_instances": len(active_instances),
         "instances_count": len(active_instances),
@@ -1531,6 +2198,8 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
         "source_instance": freshest.label,
         "latest_update_utc": latest_update,
         "is_stale": is_stale,
+        "is_provisional": effective_account["is_provisional"],
+        "source": effective_account["source"],
     }
 
 
@@ -1561,6 +2230,9 @@ def dashboard_status(
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
 ) -> dict[str, Any]:
     configured = instances if instances is not None else load_monitor_configuration(config=config).instances
+    effective_recent_control_actions = recent_control_actions
+    if config is not None and instances is not None:
+        configured, effective_recent_control_actions = _runtime_truth_instances(configured, config=config)
     summarized = [
         summarize_instance(
             instance,
@@ -1572,12 +2244,13 @@ def dashboard_status(
     ]
     active_instances = [instance for instance in summarized if instance.evidence_scope != "historical"]
     display_instances = active_instances or summarized
+    active_instance_count = len(active_instances)
     issues = [issue for instance in display_instances for issue in instance.issues]
     notes = [note for instance in display_instances for note in instance.notes]
     recent_activity = _collect_recent_activity(display_instances)
     recent_control_rows, latest_control_updated_at_utc = _load_recent_control_actions(
         config=config,
-        recent_control_actions=recent_control_actions,
+        recent_control_actions=effective_recent_control_actions,
     )
     payload = {
         "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -1588,7 +2261,14 @@ def dashboard_status(
             stale_after_minutes=stale_after_minutes,
             historical_issue_limit=historical_issue_limit,
         ),
-        "instances": [_instance_payload(instance, config=config) for instance in display_instances],
+        "instances": [
+            _instance_payload(
+                instance,
+                config=config,
+                active_instance_count=active_instance_count or len(display_instances),
+            )
+            for instance in display_instances
+        ],
         "recent_control_actions": recent_control_rows,
         "latest_control_updated_at_utc": latest_control_updated_at_utc,
         "recent_control_activity_count": len(recent_control_rows),
@@ -1612,14 +2292,25 @@ def create_app(
     historical_issue_limit: int = DEFAULT_HISTORY_ISSUE_LIMIT,
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
     refresh_seconds: int = DEFAULT_REFRESH_SECONDS,
+    refresh_runtime_state: bool = False,
 ) -> Flask:
     app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[2] / "templates"))
 
     def status_payload() -> dict[str, Any]:
+        current_instances = instances
+        current_recent_control_actions = recent_control_actions
+        if refresh_runtime_state and config is not None:
+            try:
+                current_monitor_configuration = load_monitor_configuration(config=config)
+            except Exception:
+                current_monitor_configuration = None
+            if current_monitor_configuration is not None:
+                current_instances = current_monitor_configuration.instances
+                current_recent_control_actions = current_monitor_configuration.recent_control_actions
         return dashboard_status(
-            instances,
+            current_instances,
             config=config,
-            recent_control_actions=recent_control_actions,
+            recent_control_actions=current_recent_control_actions,
             stale_after_minutes=stale_after_minutes,
             historical_issue_limit=historical_issue_limit,
             archive_markers=archive_markers,
