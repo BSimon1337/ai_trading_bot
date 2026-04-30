@@ -21,8 +21,8 @@ Defines how the local dashboard requests start, stop, and restart actions for ma
 - `requested_action`
 - `outcome_state`
 - `outcome_message`
-- `runtime_state`
-- `session_id` when launch succeeds
+- `confirmation_state`
+- `runtime_session_id` when launch succeeds
 
 **Acceptance checks**:
 
@@ -45,7 +45,7 @@ Defines how the local dashboard requests start, stop, and restart actions for ma
 - `requested_action`
 - `outcome_state`
 - `outcome_message`
-- `runtime_state`
+- `confirmation_state`
 - `previous_session_id` when available
 
 **Acceptance checks**:
@@ -70,7 +70,7 @@ Defines how the local dashboard requests start, stop, and restart actions for ma
 - `requested_action`
 - `outcome_state`
 - `outcome_message`
-- `runtime_state`
+- `confirmation_state`
 - `old_session_id` when available
 - `new_session_id` when restart succeeds
 
@@ -93,8 +93,11 @@ Defines how the local dashboard requests start, stop, and restart actions for ma
 - `asset_class`
 - `mode_context`
 - `requested_action`
+- `requested_from`
+- `confirmation_state`
 - `outcome_state`
 - `outcome_message`
+- `runtime_session_id`
 
 **Acceptance checks**:
 

@@ -43,13 +43,15 @@ http://127.0.0.1:8080
 4. Use the dashboard to start `BTC/USD` and confirm the symbol enters a startup/running state.
 5. Restart `BTC/USD` from the dashboard and confirm a new session identifier appears.
 6. Verify recent control activity shows the stock and crypto actions with readable outcomes and timestamps.
+7. Refresh the dashboard and confirm the same recent control activity is still visible without reissuing the commands.
 
 ## Live Safety Validation
 
 1. Configure one live-capable symbol as a managed runtime target.
 2. Attempt a live start or restart from the dashboard for either the stock or crypto path you plan to run live first.
-3. Confirm the dashboard presents an explicit live confirmation step before execution.
-4. Confirm a blocked live action returns a readable reason in the dashboard without requiring terminal inspection.
+3. Confirm the dashboard presents an explicit live confirmation field before execution.
+4. Submit the live action once without the token and confirm it is blocked with a readable reason.
+5. Submit the live action again with the configured `LIVE_CONFIRMATION_TOKEN` value and confirm the request proceeds through the normal runtime-manager path.
 
 ## Validation Commands
 
@@ -65,7 +67,9 @@ cd C:\Users\Beau\ai_trading_bot
 
 - Dashboard buttons or forms for `start`, `stop`, and `restart`
 - Visible paper vs live labeling near control actions
+- Explicit live confirmation input for live `start` and `restart`
 - Recent control activity entries for both stock and crypto actions
+- Recent control activity rows showing confirmation state, asset class, and runtime session id
 - Runtime state changes reflected in the dashboard after each action
 - Runtime registry updates that remain readable after refresh
 - CLI/runtime-manager fallback commands still work if you need to cross-check a dashboard-issued result during validation

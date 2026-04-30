@@ -121,9 +121,14 @@
 
 **Purpose**: Final consistency, docs, safety review, and full-feature validation across all user stories.
 
-- [ ] T039 [P] Update operator documentation for dashboard controls in `README.md` and `specs/009-interactive-bot-controls/quickstart.md`
-- [ ] T040 [P] Reconcile wording and labels across monitor UI, contracts, and spec docs in `templates/monitor.html`, `specs/009-interactive-bot-controls/contracts/`, and `specs/009-interactive-bot-controls/spec.md`
-- [ ] T041 Run the interactive-control validation bundle from `specs/009-interactive-bot-controls/quickstart.md` and record outcomes in `specs/009-interactive-bot-controls/tasks.md`
+- [x] T039 [P] Update operator documentation for dashboard controls in `README.md` and `specs/009-interactive-bot-controls/quickstart.md`
+- [x] T040 [P] Reconcile wording and labels across monitor UI, contracts, and spec docs in `templates/monitor.html`, `specs/009-interactive-bot-controls/contracts/`, and `specs/009-interactive-bot-controls/spec.md`
+- [x] T041 Run the interactive-control validation bundle from `specs/009-interactive-bot-controls/quickstart.md` and record outcomes in `specs/009-interactive-bot-controls/tasks.md`
+
+## Validation Record
+
+- 2026-04-29: Quickstart validation bundle passed with `110 passed`
+- Command: `python -m pytest tests/unit/test_monitor_data.py tests/unit/test_runtime_manager.py tests/unit/test_tray_state.py tests/contract/test_dashboard_monitor_contract.py tests/contract/test_tray_monitor_contract.py tests/smoke/test_monitor_entrypoint.py tests/smoke/test_runtime_manager_entrypoint.py`
 
 ---
 

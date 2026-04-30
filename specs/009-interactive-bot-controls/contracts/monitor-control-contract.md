@@ -18,11 +18,13 @@ Defines the dashboard payload and page behavior required to expose runtime lifec
 - `can_restart`
 - `control_availability_message`
 - `requires_live_confirmation`
+- `control_confirmation_hint`
 
 **Required top-level fields**:
 
 - `recent_control_actions`
 - `latest_control_updated_at_utc`
+- `recent_control_activity_count`
 
 **Acceptance checks**:
 
@@ -41,6 +43,7 @@ Defines the dashboard payload and page behavior required to expose runtime lifec
 - visible distinction between paper and live action context
 - live confirmation prompt when required
 - recent control activity showing action, symbol, time, and outcome
+- recent control activity showing asset class, confirmation state, and runtime session context
 - continued visibility of current runtime state and trading evidence
 
 **Acceptance checks**:
