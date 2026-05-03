@@ -161,7 +161,7 @@ What the refined monitor now shows:
 Recommended monitor startup for your current multi-crypto setup:
 
 ```powershell
-cd C:\Users\Beau\ai_trading_bot
+cd C:\{your_file_path}
 .\.venv\Scripts\Activate.ps1
 $Host.UI.RawUI.WindowTitle = "AI Trading Bot - Monitor"
 
