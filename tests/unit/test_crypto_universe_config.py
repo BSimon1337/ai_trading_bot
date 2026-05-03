@@ -20,6 +20,10 @@ def _base_env(monkeypatch):
     monkeypatch.delenv("SYMBOLS", raising=False)
     monkeypatch.delenv("CRYPTO_SYMBOLS", raising=False)
     monkeypatch.delenv("ALPACA_CRYPTO_UNIVERSE", raising=False)
+    monkeypatch.delenv("PAPER_TRADING", raising=False)
+    monkeypatch.delenv("DECISION_LOG_PATH", raising=False)
+    monkeypatch.delenv("FILL_LOG_PATH", raising=False)
+    monkeypatch.delenv("DAILY_SNAPSHOT_PATH", raising=False)
 
 
 def test_normalize_crypto_symbol_accepts_common_alpaca_forms():
@@ -64,3 +68,35 @@ def test_load_config_merges_stock_symbols_explicit_crypto_and_universe(monkeypat
     assert "SOL/USD" in config.symbols
     assert config.symbols.count("BTC/USD") == 1
     assert config.asset_classes["ETH/USD"] == "crypto"
+
+
+def test_load_config_defaults_live_log_paths_to_live_validation_scope(monkeypatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("PAPER_TRADING", "0")
+    monkeypatch.setenv("SYMBOLS", "ETH/USD")
+
+    config = load_config()
+
+    assert config.decision_log_path.endswith("logs\\live_validation_ethusd\\decisions.csv") or config.decision_log_path.endswith(
+        "logs/live_validation_ethusd/decisions.csv"
+    )
+    assert config.fill_log_path.endswith("live_validation_ethusd\\fills.csv") or config.fill_log_path.endswith(
+        "live_validation_ethusd/fills.csv"
+    )
+    assert config.daily_snapshot_path.endswith("live_validation_ethusd\\daily_snapshot.csv") or config.daily_snapshot_path.endswith(
+        "live_validation_ethusd/daily_snapshot.csv"
+    )
+
+
+def test_load_config_keeps_explicit_log_paths(monkeypatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("PAPER_TRADING", "0")
+    monkeypatch.setenv("DECISION_LOG_PATH", "custom/decisions.csv")
+    monkeypatch.setenv("FILL_LOG_PATH", "custom/fills.csv")
+    monkeypatch.setenv("DAILY_SNAPSHOT_PATH", "custom/snapshot.csv")
+
+    config = load_config()
+
+    assert config.decision_log_path == "custom/decisions.csv"
+    assert config.fill_log_path == "custom/fills.csv"
+    assert config.daily_snapshot_path == "custom/snapshot.csv"

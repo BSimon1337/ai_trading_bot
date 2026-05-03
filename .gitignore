@@ -1,8 +1,15 @@
 env/
 .venv/
 venv/
+.env
+*.env
 __pycache__/
 *.py[cod]
 logs/SentimentMLStrategy_*
 logs/paper_validation*/
 logs/*monitor*.log
+
+# Spec Kit / planning artifacts not required to run the project
+.specify/
+.agents/
+specs/

@@ -182,7 +182,7 @@ Monitor and control troubleshooting:
 
 - Blank browser page: confirm you launched from the repo root or used `tradingbot-monitor`, then open the exact host and port you passed on the command line.
 - Wrong working directory: run `cd C:\Users\Beau\ai_trading_bot` before `python monitor_app.py` or module-style commands so templates and local logs resolve correctly.
-- Missing logs: the monitor still starts, but it will show `no_data` or warning states until runtime evidence exists under the expected `logs/paper_validation*` paths.
+- Missing logs: the monitor still starts, but it will show `no_data` or warning states until runtime evidence exists under the expected mode-aware paths, such as `logs/live_validation*` for live runs and `logs/paper_validation*` for paper runs.
 - Tray unavailable: use `tradingbot-monitor --no-tray` to keep the dashboard usable if `pystray` cannot attach to the local desktop session.
 - Historical noise still showing up as current: move older evidence into folders named like `archived`, `history`, or `old`, or set `MONITOR_ARCHIVE_MARKERS` to match your retention folder names.
 - Current evidence feeling too old or too aggressive: tune `MONITOR_STALE_AFTER_MINUTES` and `MONITOR_HISTORICAL_ISSUE_LIMIT` for your local workflow.
@@ -229,7 +229,7 @@ The next monitor-focused refinement after interactive controls is runtime observ
 
 Generated runtime evidence:
 
-- `logs/paper_validation*` contains local operator evidence and should stay out of commits unless you intentionally want to preserve example artifacts.
+- `logs/live_validation*` and `logs/paper_validation*` contain local operator evidence and should stay out of commits unless you intentionally want to preserve example artifacts.
 
 ## Validation
 

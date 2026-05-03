@@ -41,9 +41,7 @@ if ($Mode -eq "live") {
     if (-not $env:LIVE_CONFIRMATION_TOKEN) {
         $env:LIVE_CONFIRMATION_TOKEN = "CONFIRM"
     }
-    if (-not $env:LIVE_RUN_CONFIRMATION) {
-        $env:LIVE_RUN_CONFIRMATION = $env:LIVE_CONFIRMATION_TOKEN
-    }
+    $env:LIVE_RUN_CONFIRMATION = $env:LIVE_CONFIRMATION_TOKEN
 } else {
     $env:PAPER_TRADING = "1"
     $env:BASE_URL = "https://paper-api.alpaca.markets"

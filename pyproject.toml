@@ -25,6 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest==9.0.3",
+    "ruff==0.14.8",
 ]
 model = [
     "scikit-learn==1.7.2",

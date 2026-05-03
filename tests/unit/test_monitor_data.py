@@ -32,6 +32,7 @@ from tradingbot.app.monitor import (
     DecisionSummary,
     DashboardInstance,
     SnapshotSummary,
+    _available_paths_for_symbol,
     discover_monitor_instances,
     dashboard_status,
     load_monitor_configuration,
@@ -126,6 +127,20 @@ def test_normalize_timestamps_sorts_rows_by_timestamp():
     normalized = normalize_timestamps(frame)
 
     assert list(normalized["symbol"]) == ["ETH/USD", "BTC/USD"]
+
+
+def test_normalize_timestamps_parses_mixed_offset_formats():
+    frame = pd.DataFrame(
+        [
+            {"timestamp": "2026-04-30T14:00:30.651108-04:00", "symbol": "SPY"},
+            {"timestamp": "2026-04-30T19:19:48.944635+00:00", "symbol": "SYSTEM"},
+        ]
+    )
+
+    normalized = normalize_timestamps(frame)
+
+    assert normalized["timestamp"].notna().all()
+    assert list(normalized["symbol"]) == ["SPY", "SYSTEM"]
 
 
 def test_normalize_snapshot_frame_parses_mixed_date_and_timestamp_values():
@@ -301,6 +316,47 @@ def test_load_monitor_configuration_merges_runtime_registry_state(tmp_path, monk
     assert instance.runtime_session_id == "session-btc"
     assert instance.runtime_pid == 2468
     assert instance.runtime_started_at_utc == "2026-04-28T01:55:00+00:00"
+
+
+def test_load_monitor_configuration_adds_registry_managed_runtime_symbols(tmp_path, monkeypatch):
+    runtime_registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    eth_root = tmp_path / "paper_validation_ethusd"
+    write_runtime_registry(
+        runtime_registry_path,
+        {
+            "registry_version": 1,
+            "updated_at_utc": "2026-04-30T19:20:00+00:00",
+            "managed_runtimes": [
+                {
+                    **runtime_registry_runtime(symbol="ETH/USD", session_id="session-eth"),
+                    "decision_log_path": str(eth_root / "decisions.csv"),
+                    "fill_log_path": str(eth_root / "fills.csv"),
+                    "snapshot_log_path": str(eth_root / "daily_snapshot.csv"),
+                }
+            ],
+            "recent_sessions": [],
+            "lifecycle_events": [runtime_registry_lifecycle_event(symbol="ETH/USD", session_id="session-eth")],
+            "recent_control_actions": [],
+        },
+    )
+    monkeypatch.setenv("RUNTIME_REGISTRY_PATH", str(runtime_registry_path))
+    config = make_bot_config(
+        symbols=("SPY",),
+        runtime_registry_path=str(runtime_registry_path),
+        decision_log_path=str(tmp_path / "paper_validation" / "decisions.csv"),
+        fill_log_path=str(tmp_path / "paper_validation" / "fills.csv"),
+        daily_snapshot_path=str(tmp_path / "paper_validation" / "daily_snapshot.csv"),
+    )
+
+    monitor_config = load_monitor_configuration(config=config)
+    instances = {instance.label: instance for instance in monitor_config.instances}
+
+    assert set(instances) == {"SPY", "ETH/USD"}
+    assert instances["SPY"].decision_log_path == Path(config.decision_log_path)
+    assert instances["ETH/USD"].decision_log_path == eth_root / "decisions.csv"
+    assert instances["ETH/USD"].fill_log_path == eth_root / "fills.csv"
+    assert instances["ETH/USD"].snapshot_log_path == eth_root / "daily_snapshot.csv"
+    assert instances["ETH/USD"].runtime_session_id == "session-eth"
 
 
 def test_load_monitor_configuration_uses_configured_observability_limits(tmp_path, monkeypatch):
@@ -1106,6 +1162,18 @@ def test_discover_monitor_instances_handles_slash_crypto_symbols(tmp_path):
     assert paths[2] == tmp_path / "paper_validation_ethusdc" / "decisions.csv"
 
 
+def test_available_paths_for_symbol_prefers_live_scope_and_falls_back_to_legacy_paper_scope(tmp_path):
+    live_root = tmp_path / "live_validation_ethusd"
+    live_root.mkdir()
+    (live_root / "decisions.csv").write_text("timestamp\n", encoding="utf-8")
+
+    live_paths = _available_paths_for_symbol("ETH/USD", base_dir=tmp_path, mode="live")
+    fallback_paths = _available_paths_for_symbol("BTC/USD", base_dir=tmp_path, mode="live")
+
+    assert live_paths[0] == tmp_path / "live_validation_ethusd" / "decisions.csv"
+    assert fallback_paths[0] == tmp_path / "paper_validation_btcusd" / "decisions.csv"
+
+
 def test_load_monitor_configuration_uses_single_config_log_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("MONITOR_REFRESH_SECONDS", "20")
     config = make_bot_config(
@@ -1308,6 +1376,110 @@ def test_dashboard_status_uses_snapshot_delta_held_value_without_recent_fill(tmp
     assert item["held_value"] == 20.0
     assert item["held_value_estimate"] == 20.0
     assert item["latest_fill_price"] == 10.0
+
+
+def test_dashboard_status_reports_zero_held_value_for_flat_position(tmp_path):
+    paths = create_monitor_fixture(tmp_path / "spy", "healthy", symbol="SPY")
+    now = datetime.now(timezone.utc)
+    Path(paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                f"{now.isoformat()},live,SPY,99.01,50.71,0.0,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="SPY",
+        symbols=("SPY",),
+        asset_classes=("stock",),
+        decision_log_path=paths["decisions"],
+        fill_log_path=paths["fills"],
+        snapshot_log_path=paths["snapshot"],
+        runtime_state="running",
+        runtime_mode_context="live",
+    )
+
+    item = dashboard_status((instance,))["instances"][0]
+
+    assert item["position_qty"] == 0.0
+    assert item["held_value"] == 0.0
+    assert item["freshness_state"] == "current"
+
+
+def test_dashboard_status_filters_shared_legacy_rows_to_instance_symbol(tmp_path):
+    live_root = tmp_path / "live_validation"
+    paper_root = tmp_path / "paper_validation"
+    live_root.mkdir()
+    paper_root.mkdir()
+    now = datetime.now(timezone.utc)
+    (live_root / "decisions.csv").write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,quantity,portfolio_value,cash,reason,result",
+                f"{now.isoformat()},active-live,SYSTEM,system,hold,guardrail,0,,,runtime started,started",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (live_root / "fills.csv").write_text(
+        "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result\n",
+        encoding="utf-8",
+    )
+    (live_root / "daily_snapshot.csv").write_text(
+        "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl\n",
+        encoding="utf-8",
+    )
+    (paper_root / "decisions.csv").write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,action,action_source,quantity,portfolio_value,cash,reason,result",
+                f"{(now - pd.Timedelta(minutes=5)).isoformat()},live,SPY,stock,hold,guardrail,0,99.01,50.71,no_signal,skipped",
+                f"{(now - pd.Timedelta(minutes=4)).isoformat()},live,BTC/USD,crypto,buy,model,0.1,120.0,20.0,submitted,submitted",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (paper_root / "fills.csv").write_text(
+        "\n".join(
+            [
+                "timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result",
+                f"{(now - pd.Timedelta(minutes=4)).isoformat()},live,BTC/USD,crypto,buy,0.1,order-btc,120.0,20.0,100.0,filled",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (paper_root / "daily_snapshot.csv").write_text(
+        "\n".join(
+            [
+                "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl",
+                f"{(now - pd.Timedelta(minutes=5)).isoformat()},live,SPY,99.01,50.71,0.0,0.0",
+                f"{(now - pd.Timedelta(minutes=4)).isoformat()},live,BTC/USD,120.0,20.0,0.1,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    instance = DashboardInstance(
+        label="SPY",
+        symbols=("SPY",),
+        asset_classes=("stock",),
+        decision_log_path=live_root / "decisions.csv",
+        fill_log_path=live_root / "fills.csv",
+        snapshot_log_path=live_root / "daily_snapshot.csv",
+        runtime_state="running",
+        runtime_mode_context="live",
+        runtime_started_at_utc=now.isoformat(),
+        is_fresh_runtime_session=True,
+    )
+
+    item = dashboard_status((instance,))["instances"][0]
+
+    assert item["latest_asset_class"] == "stock"
+    assert item["last_fill_utc"] == ""
+    assert item["cash"] == 50.71
+    assert item["position_qty"] == 0.0
+    assert item["held_value"] == 0.0
 
 
 def test_dashboard_status_uses_provisional_fill_state_when_fill_is_newer_than_snapshot(tmp_path):
@@ -1968,11 +2140,90 @@ def test_dashboard_status_includes_account_overview_from_freshest_instance(tmp_p
         )
     )
 
-    assert payload["account_overview"]["source_instance"] == "ETH/USD"
-    assert payload["account_overview"]["account_equity"] == 100.0
-    assert payload["account_overview"]["cash"] == 100.0
+    assert payload["account_overview"]["source_instance"] == "account evidence"
+    assert payload["account_overview"]["account_equity"] == 101.5
+    assert payload["account_overview"]["cash"] == 88.0
     assert payload["account_overview"]["instances_count"] == 2
     assert payload["account_overview"]["is_stale"] is False
+
+
+def test_dashboard_status_uses_stock_account_evidence_for_shared_cash_when_crypto_is_newer(tmp_path):
+    spy_paths = create_monitor_fixture(tmp_path / "spy", "healthy", symbol="SPY")
+    sol_paths = create_monitor_fixture(tmp_path / "sol", "healthy", symbol="SOL/USD")
+    now = datetime.now(timezone.utc)
+    decision_header = (
+        "timestamp,mode,symbol,asset_class,action,action_source,model_prob_up,sentiment_source,"
+        "sentiment_probability,sentiment_label,quantity,portfolio_value,cash,reason,result"
+    )
+    snapshot_header = "date,mode,symbol,portfolio_value,cash,position_qty,day_pnl"
+    Path(spy_paths["decisions"]).write_text(
+        "\n".join(
+            [
+                decision_header,
+                f"{(now - pd.Timedelta(hours=4)).isoformat()},live,SPY,stock,hold,guardrail,0.0,external,1.0,neutral,0,99.01,50.71,stale_market_data,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(spy_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{(now - pd.Timedelta(hours=4)).isoformat()},live,SPY,99.01,50.71,0.0,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(sol_paths["decisions"]).write_text(
+        "\n".join(
+            [
+                decision_header,
+                f"{now.isoformat()},live,SOL/USD,crypto,hold,sentiment,0.5,external,0.9,neutral,0,99.09,2.799734,no_signal,skipped",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    Path(sol_paths["snapshot"]).write_text(
+        "\n".join(
+            [
+                snapshot_header,
+                f"{now.isoformat()},live,SOL/USD,99.09,2.799734,0.152445,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = dashboard_status(
+        (
+            DashboardInstance(
+                label="SPY",
+                symbols=("SPY",),
+                asset_classes=("stock",),
+                decision_log_path=spy_paths["decisions"],
+                fill_log_path=spy_paths["fills"],
+                snapshot_log_path=spy_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+            DashboardInstance(
+                label="SOL/USD",
+                symbols=("SOL/USD",),
+                asset_classes=("crypto",),
+                decision_log_path=sol_paths["decisions"],
+                fill_log_path=sol_paths["fills"],
+                snapshot_log_path=sol_paths["snapshot"],
+                runtime_state="running",
+                runtime_mode_context="live",
+            ),
+        )
+    )
+
+    assert payload["account_overview"]["source_instance"] == "account evidence"
+    assert payload["account_overview"]["cash"] == 50.71
+    assert payload["account_overview"]["account_equity"] == 99.01
+    assert [instance["cash"] for instance in payload["instances"]] == [50.71, 50.71]
+    assert [instance["account_equity"] for instance in payload["instances"]] == [99.01, 99.01]
+    assert payload["instances"][1]["portfolio_value"] == 99.09
 
 
 def test_monitor_reads_snapshot_rows_with_iso_timestamps(tmp_path):

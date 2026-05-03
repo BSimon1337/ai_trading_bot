@@ -192,10 +192,11 @@ def _sanitize_symbol_for_path(symbol: str) -> str:
     return "".join(character for character in symbol.strip().lower() if character.isalnum())
 
 
-def symbol_log_scope(symbol: str, *, base_dir: Path = Path("logs")) -> RuntimeLogScope:
+def symbol_log_scope(symbol: str, *, base_dir: Path = Path("logs"), mode: str = "paper") -> RuntimeLogScope:
     normalized_symbol = symbol.strip()
     suffix = "" if normalized_symbol.upper() == "SPY" else f"_{_sanitize_symbol_for_path(normalized_symbol)}"
-    root = Path(base_dir) / f"paper_validation{suffix}"
+    mode_prefix = "live_validation" if mode.strip().lower() == "live" else "paper_validation"
+    root = Path(base_dir) / f"{mode_prefix}{suffix}"
     return RuntimeLogScope(
         decision_log_path=str(root / "decisions.csv"),
         fill_log_path=str(root / "fills.csv"),
@@ -472,8 +473,8 @@ def current_session_for_runtime(registry: RuntimeRegistry, runtime: ManagedRunti
     return None
 
 
-def build_symbol_runtime_config(config: BotConfig, symbol: str) -> BotConfig:
-    log_scope = symbol_log_scope(symbol)
+def build_symbol_runtime_config(config: BotConfig, symbol: str, *, mode: str | None = None) -> BotConfig:
+    log_scope = symbol_log_scope(symbol, mode=mode or ("paper" if config.paper else "live"))
     return BotConfig(
         **{
             **config.__dict__,
@@ -505,8 +506,8 @@ def build_runtime_launch_env(
     *,
     mode: str | None = None,
 ) -> tuple[dict[str, str], dict[str, str], RuntimeLogScope]:
-    symbol_config = build_symbol_runtime_config(config, symbol)
     requested_mode = _requested_mode_context(mode, config)
+    symbol_config = build_symbol_runtime_config(config, symbol, mode=requested_mode)
     live_confirmation = symbol_config.live_run_confirmation
     if requested_mode == "live" and not live_confirmation:
         live_confirmation = symbol_config.live_confirmation_token
@@ -574,6 +575,18 @@ def reconcile_runtime_registry(
         if runtime.lifecycle_state not in {"starting", "running", "restarting", "stopping"}:
             continue
         if runtime.pid is not None and process_is_running(runtime.pid):
+            seen_at = utc_now_iso()
+            registry = register_managed_runtime(
+                registry,
+                ManagedRuntime(
+                    **{
+                        **runtime.__dict__,
+                        "lifecycle_state": "running" if runtime.lifecycle_state in {"starting", "restarting"} else runtime.lifecycle_state,
+                        "last_seen_utc": seen_at,
+                    }
+                ),
+            )
+            changed = True
             continue
 
         changed = True
@@ -870,7 +883,7 @@ def stop_managed_runtime(
     registry = load_runtime_registry(registry_file)
     runtime = current_runtime_for_symbol(registry, symbol)
     stopped_at = utc_now_iso()
-    log_scope = symbol_log_scope(symbol)
+    log_scope = symbol_log_scope(symbol, mode="paper" if config.paper else "live")
 
     if runtime is None:
         stopped_runtime = ManagedRuntime(
