@@ -1,0 +1,4 @@
+timestamp,mode,symbol,asset_class,side,quantity,order_id,portfolio_value,cash,notional_usd,result
+2026-05-01T01:27:02.303217-04:00,live,DOGE/USD,crypto,buy,92.83541941,e8cf3fcb-90b8-4eba-9de5-127d1ccc479f,99.65,40.553805,10.156195,filled
+2026-05-01T03:57:02.293383-04:00,live,DOGE/USD,crypto,sell,92.60333086,2ffee61b-a62b-4a40-94a1-fbe3624ee2e9,99.37,50.56042,10.01042,filled
+2026-05-01T08:27:02.263816-04:00,live,DOGE/USD,crypto,buy,92.44874176,241d242a-e077-41a9-bb10-e1f7cd52ccb7,99.82,40.414259,10.115741,filled

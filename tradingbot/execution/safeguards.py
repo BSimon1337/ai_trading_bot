@@ -29,6 +29,9 @@ def resolve_runtime_state(config: BotConfig, requested_mode: str) -> RuntimeStat
             confirmation_matched=False,
         )
 
+    if config.paper and normalized_mode == "live":
+        raise RuntimeGuardrailError("Live trading is blocked because PAPER_TRADING is enabled.")
+
     if config.paper:
         return RuntimeState(
             requested_mode=normalized_mode,

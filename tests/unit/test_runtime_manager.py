@@ -36,6 +36,17 @@ from tradingbot.app.runtime_manager import (
 from tests.conftest import make_bot_config
 
 
+def _live_config(**overrides):
+    defaults = {
+        "paper": False,
+        "live_trading_enabled": True,
+        "live_run_confirmation": "CONFIRM",
+        "live_confirmation_token": "CONFIRM",
+    }
+    defaults.update(overrides)
+    return make_bot_config(**defaults)
+
+
 def _runtime(symbol: str = "BTC/USD", **overrides) -> ManagedRuntime:
     payload = {
         "symbol": symbol,
@@ -277,6 +288,18 @@ def test_build_symbol_runtime_config_uses_symbol_scoped_log_paths():
     assert symbol_config.daily_snapshot_path.endswith("paper_validation_ethusd\\daily_snapshot.csv")
 
 
+def test_build_symbol_runtime_config_uses_live_scoped_log_paths_for_live_mode():
+    config = _live_config(symbols=("BTC/USD", "ETH/USD"))
+
+    symbol_config = build_symbol_runtime_config(config, "ETH/USD", mode="live")
+
+    assert symbol_config.symbol == "ETH/USD"
+    assert symbol_config.symbols == ("ETH/USD",)
+    assert symbol_config.decision_log_path.endswith("live_validation_ethusd\\decisions.csv")
+    assert symbol_config.fill_log_path.endswith("live_validation_ethusd\\fills.csv")
+    assert symbol_config.daily_snapshot_path.endswith("live_validation_ethusd\\daily_snapshot.csv")
+
+
 def test_symbol_log_scope_preserves_distinct_symbol_scoped_paths():
     btc_scope = symbol_log_scope("BTC/USD")
     eth_scope = symbol_log_scope("ETH/USD")
@@ -284,6 +307,14 @@ def test_symbol_log_scope_preserves_distinct_symbol_scoped_paths():
     assert btc_scope.decision_log_path != eth_scope.decision_log_path
     assert "paper_validation_btcusd" in btc_scope.decision_log_path
     assert "paper_validation_ethusd" in eth_scope.decision_log_path
+
+
+def test_symbol_log_scope_uses_live_prefix_for_live_mode():
+    spy_scope = symbol_log_scope("SPY", mode="live")
+    eth_scope = symbol_log_scope("ETH/USD", mode="live")
+
+    assert spy_scope.snapshot_log_path.endswith("live_validation\\daily_snapshot.csv")
+    assert eth_scope.snapshot_log_path.endswith("live_validation_ethusd\\daily_snapshot.csv")
 
 
 def test_symbol_log_scope_keeps_stock_and_crypto_snapshot_paths_isolated():
@@ -328,6 +359,7 @@ def test_build_runtime_launch_env_sets_live_mode_scope_explicitly():
     assert env_scope["BASE_URL"] == "https://api.alpaca.markets"
     assert env_scope["LIVE_RUN_CONFIRMATION"] == "CONFIRM"
     assert env_scope["LIVE_CONFIRMATION_TOKEN"] == "CONFIRM"
+    assert env_scope["DECISION_LOG_PATH"].endswith("live_validation_btcusd\\decisions.csv")
 
 
 def test_terminate_process_uses_taskkill_on_windows(monkeypatch):
@@ -376,7 +408,7 @@ def test_terminate_process_maps_missing_windows_process_to_process_lookup(monkey
 
 def test_start_managed_runtime_registers_running_state_and_session(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
-    config = make_bot_config(runtime_registry_path=str(registry_path))
+    config = _live_config(runtime_registry_path=str(registry_path))
 
     class FakeProcess:
         pid = 4567
@@ -412,7 +444,7 @@ def test_start_managed_runtime_registers_running_state_and_session(tmp_path: Pat
 
 def test_reconcile_runtime_registry_marks_dead_running_process_failed(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
-    config = make_bot_config(runtime_registry_path=str(registry_path))
+    config = _live_config(runtime_registry_path=str(registry_path))
     registry = RuntimeRegistry(
         managed_runtimes=(
             _runtime(
@@ -440,6 +472,39 @@ def test_reconcile_runtime_registry_marks_dead_running_process_failed(tmp_path: 
     assert runtime.pid is None
     assert runtime.failure_reason == "Runtime process exited unexpectedly."
     assert reconciled.recent_sessions[-1].end_reason == "process_exit_detected"
+
+
+def test_reconcile_runtime_registry_refreshes_running_process_heartbeat(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = _live_config(runtime_registry_path=str(registry_path))
+    registry = RuntimeRegistry(
+        managed_runtimes=(
+            _runtime(
+                symbol="DOGE/USD",
+                lifecycle_state="running",
+                session_id="session-doge",
+                pid=4567,
+                last_seen_utc="2026-04-30T00:00:00+00:00",
+                decision_log_path="logs/live_validation_dogeusd/decisions.csv",
+                fill_log_path="logs/live_validation_dogeusd/fills.csv",
+                snapshot_log_path="logs/live_validation_dogeusd/daily_snapshot.csv",
+            ),
+        ),
+        recent_sessions=(_session(symbol="DOGE/USD", session_id="session-doge"),),
+    )
+    save_runtime_registry(registry_path, registry)
+
+    reconciled = reconcile_runtime_registry(
+        config,
+        registry_path=registry_path,
+        process_is_running=lambda pid: pid == 4567,
+    )
+    runtime = runtime_state_index(reconciled)["DOGE/USD"]
+
+    assert runtime.lifecycle_state == "running"
+    assert runtime.pid == 4567
+    assert runtime.last_seen_utc != "2026-04-30T00:00:00+00:00"
+    assert not reconciled.lifecycle_events
 
 
 def test_reconcile_runtime_registry_marks_pidless_running_runtime_failed(tmp_path: Path):
@@ -562,9 +627,33 @@ def test_start_managed_runtime_uses_live_cli_mode_even_for_paper_execution(tmp_p
     assert calls["env"]["BASE_URL"] == "https://paper-api.alpaca.markets"
 
 
+def test_start_managed_runtime_blocks_live_mode_when_paper_trading_enabled(tmp_path: Path):
+    registry_path = tmp_path / "runtime" / "runtime_registry.json"
+    config = make_bot_config(runtime_registry_path=str(registry_path), paper=True)
+
+    def fake_popen(command, cwd=None, env=None):
+        del command, cwd, env
+        raise AssertionError("popen should not be called when PAPER_TRADING blocks live mode")
+
+    result = start_managed_runtime(
+        config,
+        "BTC/USD",
+        mode="live",
+        registry_path=registry_path,
+        popen_factory=fake_popen,
+        cwd=tmp_path,
+    )
+
+    assert result.runtime_state == "failed"
+    assert "PAPER_TRADING" in result.status_message
+    registry = load_runtime_registry(registry_path)
+    runtime = runtime_state_index(registry)["BTC/USD"]
+    assert runtime.lifecycle_state == "failed"
+
+
 def test_start_managed_runtimes_tracks_independent_symbol_sessions(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
-    config = make_bot_config(runtime_registry_path=str(registry_path), symbols=("BTC/USD", "ETH/USD"))
+    config = _live_config(runtime_registry_path=str(registry_path), symbols=("BTC/USD", "ETH/USD"))
 
     class FakeProcess:
         def __init__(self, pid):
@@ -595,7 +684,7 @@ def test_start_managed_runtimes_tracks_independent_symbol_sessions(tmp_path: Pat
 
 def test_stop_managed_runtime_marks_runtime_stopped_and_closes_session(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
-    config = make_bot_config(runtime_registry_path=str(registry_path))
+    config = _live_config(runtime_registry_path=str(registry_path))
 
     class FakeProcess:
         pid = 4567
@@ -635,7 +724,7 @@ def test_stop_managed_runtime_marks_runtime_stopped_and_closes_session(tmp_path:
 
 def test_stop_managed_runtime_handles_already_dead_process_cleanly(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
-    config = make_bot_config(runtime_registry_path=str(registry_path))
+    config = _live_config(runtime_registry_path=str(registry_path))
     registry = RuntimeRegistry(
         managed_runtimes=(
             _runtime(
@@ -670,7 +759,7 @@ def test_stop_managed_runtime_handles_already_dead_process_cleanly(tmp_path: Pat
 
 def test_restart_managed_runtime_replaces_session_with_fresh_running_session(tmp_path: Path):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
-    config = make_bot_config(runtime_registry_path=str(registry_path))
+    config = _live_config(runtime_registry_path=str(registry_path))
 
     class FakeProcess:
         def __init__(self, pid: int):
@@ -913,7 +1002,7 @@ def test_request_start_runtime_action_allows_live_dashboard_start_with_confirmat
 
 def test_request_restart_runtime_action_records_new_session_for_successful_restart(tmp_path: Path, monkeypatch):
     registry_path = tmp_path / "runtime" / "runtime_registry.json"
-    config = make_bot_config(runtime_registry_path=str(registry_path))
+    config = _live_config(runtime_registry_path=str(registry_path))
     monkeypatch.setattr("tradingbot.app.runtime_manager._is_process_running", lambda pid: True)
 
     class FakeProcess:
@@ -946,6 +1035,7 @@ def test_request_restart_runtime_action_records_new_session_for_successful_resta
         terminate_process=fake_terminate,
         popen_factory=fake_popen,
         cwd=tmp_path,
+        confirmation_state="confirmed",
     )
     registry = load_runtime_registry(registry_path)
 

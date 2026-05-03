@@ -23,6 +23,8 @@ from tradingbot.strategy.signals import choose_trade_action
 LOGGER = logging.getLogger(__name__)
 
 MIN_CRYPTO_ORDER_NOTIONAL_USD = 1.0
+MIN_CRYPTO_DAILY_BAR_STALENESS_MINUTES = 2880
+MIN_STOCK_DAILY_BAR_STALENESS_MINUTES = 5760
 
 
 class SentimentMLStrategy(Strategy):
@@ -443,7 +445,12 @@ class SentimentMLStrategy(Strategy):
         if pd.isna(now) or pd.isna(feature_ts):
             return False
         age_minutes = (now - feature_ts).total_seconds() / 60.0
-        return age_minutes > float(self.max_data_staleness_minutes)
+        max_staleness_minutes = float(self.max_data_staleness_minutes)
+        if self.is_crypto:
+            max_staleness_minutes = max(max_staleness_minutes, MIN_CRYPTO_DAILY_BAR_STALENESS_MINUTES)
+        else:
+            max_staleness_minutes = max(max_staleness_minutes, MIN_STOCK_DAILY_BAR_STALENESS_MINUTES)
+        return age_minutes > max_staleness_minutes
 
     def _get_model_signal(self) -> tuple[str | None, float | None]:
         model = self._load_model_if_needed()
@@ -472,6 +479,18 @@ class SentimentMLStrategy(Strategy):
         if side == "buy":
             return last_price * (1.0 + slippage)
         return last_price * (1.0 - slippage)
+
+    @staticmethod
+    def _broker_rejection_reason(order, submission) -> str:
+        for source in (submission, order):
+            for attribute in ("error", "error_message", "message", "reason", "raw_data"):
+                value = getattr(source, attribute, None)
+                if value:
+                    text = str(value).strip()
+                    if text:
+                        return f"broker_error:{text[:180]}"
+        status = str(getattr(submission, "status", getattr(order, "status", ""))).strip()
+        return f"broker_{status.lower() or 'order_not_submitted'}"
 
     def _submit_sized_order(self, side: str) -> dict:
         trade_asset = self._trade_asset()
@@ -577,7 +596,7 @@ class SentimentMLStrategy(Strategy):
         if any(status in order_status for status in {"error", "reject", "cancel"}):
             return {
                 "executed": False,
-                "reason": f"broker_{order_status or 'order_not_submitted'}",
+                "reason": self._broker_rejection_reason(order, submission),
                 "quantity": float(delta_qty),
                 "order_id": order_id,
             }

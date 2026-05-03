@@ -74,6 +74,23 @@ def infer_asset_class(symbol: str) -> str:
     return "stock"
 
 
+def _sanitize_symbol_for_path(symbol: str) -> str:
+    return "".join(character for character in symbol.strip().lower() if character.isalnum())
+
+
+def _default_log_root(symbol: str, *, paper: bool) -> Path:
+    suffix = "" if symbol.upper() == "SPY" else f"_{_sanitize_symbol_for_path(symbol)}"
+    prefix = "paper_validation" if paper else "live_validation"
+    return Path("logs") / f"{prefix}{suffix}"
+
+
+def _default_log_path(env_name: str, filename: str, symbol: str, *, paper: bool) -> str:
+    configured = os.getenv(env_name)
+    if configured:
+        return configured
+    return str(_default_log_root(symbol, paper=paper) / filename)
+
+
 @dataclass(frozen=True)
 class BotConfig:
     api_key: str
@@ -190,13 +207,14 @@ def load_config() -> BotConfig:
     symbols = _get_symbols()
     paper = _get_bool("PAPER_TRADING", True)
     live_enabled = _get_bool("LIVE_TRADING_ENABLED", _get_bool("ALLOW_LIVE_TRADING", False))
+    primary_symbol = symbols[0]
 
     return BotConfig(
         api_key=api_key,
         api_secret=api_secret,
         base_url=base_url,
         paper=paper,
-        symbol=symbols[0],
+        symbol=primary_symbol,
         symbols=symbols,
         cash_at_risk=_get_float("CASH_AT_RISK", 0.20),
         sentiment_probability_threshold=_get_float("SENTIMENT_THRESHOLD", 0.70),
@@ -215,9 +233,9 @@ def load_config() -> BotConfig:
         kill_switch=_get_bool("KILL_SWITCH", False),
         max_trades_per_day=_get_int("MAX_TRADES_PER_DAY", 3),
         cooldown_minutes_after_loss=_get_int("COOLDOWN_MINUTES_AFTER_LOSS", 120),
-        decision_log_path=os.getenv("DECISION_LOG_PATH", "logs/paper_validation/decisions.csv"),
-        fill_log_path=os.getenv("FILL_LOG_PATH", "logs/paper_validation/fills.csv"),
-        daily_snapshot_path=os.getenv("DAILY_SNAPSHOT_PATH", "logs/paper_validation/daily_snapshot.csv"),
+        decision_log_path=_default_log_path("DECISION_LOG_PATH", "decisions.csv", primary_symbol, paper=paper),
+        fill_log_path=_default_log_path("FILL_LOG_PATH", "fills.csv", primary_symbol, paper=paper),
+        daily_snapshot_path=_default_log_path("DAILY_SNAPSHOT_PATH", "daily_snapshot.csv", primary_symbol, paper=paper),
         max_notional_per_order_usd=_get_float("MAX_NOTIONAL_PER_ORDER_USD", 10000.0),
         max_consecutive_losses=_get_int("MAX_CONSECUTIVE_LOSSES", 3),
         max_data_staleness_minutes=_get_int("MAX_DATA_STALENESS_MINUTES", 1440),

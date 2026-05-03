@@ -92,6 +92,47 @@ def test_crypto_order_rejection_is_not_logged_as_submitted():
     assert "fill_row" not in observed
 
 
+def test_crypto_order_rejection_includes_broker_message():
+    strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
+    strategy.symbol = "DOGE/USD"
+    strategy.mode = "live"
+    strategy.is_crypto = True
+    strategy.asset_class = "crypto"
+    strategy.cash_at_risk = 0.2
+    strategy.slippage_bps = 0.0
+    strategy.max_notional_per_order_usd = 25.0
+    strategy.risk_manager = type(
+        "FakeRiskManager",
+        (),
+        {
+            "limits": type("FakeLimits", (), {"allow_short": False, "max_gross_leverage": 1.0})(),
+            "max_position_quantity": lambda self, portfolio_value, last_price, allow_fractional=False: 25.0 / last_price,
+            "estimate_gross_leverage": lambda self, current_qty, proposed_delta_qty, price, portfolio_value: 0.25,
+        },
+    )()
+    strategy._trades_today = 0
+    strategy._pending_trade_equity_anchor = None
+    strategy._deferred_crypto_order_qty = 0.0
+    strategy._deferred_crypto_order_side = None
+    strategy.fill_log_path = None
+
+    strategy.get_last_price = lambda asset, quote=None: 0.11
+    strategy.get_cash = lambda: 40.0
+    strategy._get_portfolio_value = lambda: 100.0
+    strategy._current_position_qty = lambda: 92.21761991
+    strategy.create_order = lambda *args, **kwargs: type("Order", (), {"identifier": "order-1", "status": "new"})()
+    strategy.submit_order = lambda order: type(
+        "Submission",
+        (),
+        {"identifier": "submission-1", "status": "error", "message": "insufficient qty available"},
+    )()
+
+    result = strategy._submit_sized_order("sell")
+
+    assert result["executed"] is False
+    assert result["reason"] == "broker_error:insufficient qty available"
+
+
 def test_crypto_order_below_min_notional_is_skipped_before_broker_submission():
     strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
     strategy.symbol = "BTC/USD"
@@ -228,6 +269,46 @@ def test_crypto_decision_logging_keeps_fractional_submitted_quantity():
     assert observed["decision_row"]["action"] == "buy"
     assert observed["decision_row"]["result"] == "submitted"
     assert observed["decision_row"]["quantity"] == 0.00018074
+
+
+def test_crypto_daily_feature_staleness_allows_previous_day_boundary():
+    strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
+    strategy.is_crypto = True
+    strategy.max_data_staleness_minutes = 1440
+    strategy._last_features_timestamp = pd.Timestamp("2026-04-30T00:00:00Z")
+    strategy.get_datetime = lambda: pd.Timestamp("2026-05-01T00:12:00Z")
+
+    assert strategy._is_market_data_stale() is False
+
+
+def test_crypto_daily_feature_staleness_still_blocks_truly_old_data():
+    strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
+    strategy.is_crypto = True
+    strategy.max_data_staleness_minutes = 1440
+    strategy._last_features_timestamp = pd.Timestamp("2026-04-28T00:00:00Z")
+    strategy.get_datetime = lambda: pd.Timestamp("2026-05-01T00:12:00Z")
+
+    assert strategy._is_market_data_stale() is True
+
+
+def test_stock_daily_feature_staleness_allows_prior_trading_day_boundary():
+    strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
+    strategy.is_crypto = False
+    strategy.max_data_staleness_minutes = 1440
+    strategy._last_features_timestamp = pd.Timestamp("2026-04-30T00:00:00Z")
+    strategy.get_datetime = lambda: pd.Timestamp("2026-05-01T00:12:00Z")
+
+    assert strategy._is_market_data_stale() is False
+
+
+def test_stock_daily_feature_staleness_still_blocks_truly_old_data():
+    strategy = SentimentMLStrategy.__new__(SentimentMLStrategy)
+    strategy.is_crypto = False
+    strategy.max_data_staleness_minutes = 1440
+    strategy._last_features_timestamp = pd.Timestamp("2026-04-24T00:00:00Z")
+    strategy.get_datetime = lambda: pd.Timestamp("2026-05-01T00:12:00Z")
+
+    assert strategy._is_market_data_stale() is True
 
 
 def test_on_filled_order_logs_actual_crypto_sell_fill():

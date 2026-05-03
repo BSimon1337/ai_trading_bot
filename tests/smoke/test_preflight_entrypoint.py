@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from tradingbot.app import main as app_main
 from tradingbot.app import preflight
-from tradingbot.app.preflight import ReadinessCheckResult, ReadinessReport, ReadinessStatus
+from tradingbot.app.preflight import ReadinessCheckResult, ReadinessStatus
 from tests.conftest import make_bot_config
 
 

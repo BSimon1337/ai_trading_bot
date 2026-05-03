@@ -44,6 +44,7 @@ DEFAULT_SENTIMENT_TREND_LIMIT = 5
 DEFAULT_CONTROL_ACTIVITY_LIMIT = 25
 DEFAULT_RUNTIME_EVENT_LIMIT = 10
 DEFAULT_ACTIVE_WARNING_LIMIT = 5
+DEFAULT_FILL_HISTORY_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -318,11 +319,36 @@ def safe_read_csv(path: Path, source: str = "csv") -> CsvReadResult:
         )
 
 
+def _legacy_live_path(path: Path) -> Path | None:
+    parts = list(Path(path).parts)
+    changed = False
+    for index, part in enumerate(parts):
+        if part.startswith("live_validation"):
+            parts[index] = part.replace("live_validation", "paper_validation", 1)
+            changed = True
+    if not changed:
+        return None
+    return Path(*parts)
+
+
+def _read_csv_with_legacy_context(path: Path, source: str = "csv") -> CsvReadResult:
+    primary = safe_read_csv(path, source=source)
+    legacy_path = _legacy_live_path(path)
+    if legacy_path is None or not legacy_path.exists():
+        return primary
+    legacy = safe_read_csv(legacy_path, source=source)
+    frames = [frame for frame in (legacy.dataframe, primary.dataframe) if not frame.empty]
+    if not frames:
+        return primary
+    combined = pd.concat(frames, ignore_index=True, sort=False).drop_duplicates()
+    return CsvReadResult(path=Path(path), dataframe=combined, issue=primary.issue)
+
+
 def normalize_timestamps(dataframe: pd.DataFrame, column: str = "timestamp") -> pd.DataFrame:
     if dataframe.empty or column not in dataframe.columns:
         return dataframe
     normalized = dataframe.copy()
-    normalized[column] = pd.to_datetime(normalized[column], errors="coerce", utc=True)
+    normalized[column] = _parse_datetime_series(normalized[column])
     return normalized.sort_values(column)
 
 
@@ -374,10 +400,18 @@ def sanitize_symbol_for_path(symbol: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", normalized)
 
 
-def _paths_for_symbol(symbol: str, base_dir: Path = Path("logs")) -> tuple[Path, Path, Path]:
+def _paths_for_symbol(symbol: str, base_dir: Path = Path("logs"), mode: str = "paper") -> tuple[Path, Path, Path]:
     suffix = "" if symbol.upper() == "SPY" else f"_{sanitize_symbol_for_path(symbol)}"
-    root = base_dir / f"paper_validation{suffix}"
+    mode_prefix = "live_validation" if mode.strip().lower() == "live" else "paper_validation"
+    root = base_dir / f"{mode_prefix}{suffix}"
     return root / "decisions.csv", root / "fills.csv", root / "daily_snapshot.csv"
+
+
+def _available_paths_for_symbol(symbol: str, base_dir: Path = Path("logs"), mode: str = "paper") -> tuple[Path, Path, Path]:
+    primary = _paths_for_symbol(symbol, base_dir=base_dir, mode=mode)
+    if any(path.exists() for path in primary) or mode.strip().lower() != "live":
+        return primary
+    return _paths_for_symbol(symbol, base_dir=base_dir, mode="paper")
 
 
 def discover_monitor_instances(
@@ -394,15 +428,30 @@ def discover_monitor_instances(
         env_symbols = tuple(symbol.strip().upper() for symbol in os.getenv("SYMBOLS", "").split(",") if symbol.strip())
         symbols = env_symbols or ("SPY", "BTC/USD")
 
+    configured_symbols = tuple(symbols)
+    discovered_symbols = list(configured_symbols)
+    for runtime_symbol in runtime_index or {}:
+        if runtime_symbol not in discovered_symbols:
+            discovered_symbols.append(runtime_symbol)
+
     instances: list[DashboardInstance] = []
-    for index, symbol in enumerate(symbols):
-        if config is not None and len(symbols) == 1 and index == 0:
+    for index, symbol in enumerate(discovered_symbols):
+        runtime = (runtime_index or {}).get(symbol)
+        if runtime is not None:
+            decision_path = Path(runtime.decision_log_path)
+            fill_path = Path(runtime.fill_log_path)
+            snapshot_path = Path(runtime.snapshot_log_path)
+        elif config is not None and len(configured_symbols) == 1 and index == 0:
             decision_path = Path(config.decision_log_path)
             fill_path = Path(config.fill_log_path)
             snapshot_path = Path(config.daily_snapshot_path)
         else:
-            decision_path, fill_path, snapshot_path = _paths_for_symbol(symbol, base_dir=base_dir)
-        runtime = (runtime_index or {}).get(symbol)
+            configured_mode = "paper" if config is None or config.paper else "live"
+            decision_path, fill_path, snapshot_path = _available_paths_for_symbol(
+                symbol,
+                base_dir=base_dir,
+                mode=configured_mode,
+            )
         lifecycle_event = (lifecycle_index or {}).get(symbol)
         instances.append(
             DashboardInstance(
@@ -534,6 +583,8 @@ def _managed_runtime_mode_context(
 ) -> str:
     runtime_mode = _normalized_runtime_mode_context(instance)
     if runtime_mode in {"live", "paper"}:
+        return runtime_mode
+    if instance.is_fresh_runtime_session:
         return runtime_mode
     latest_mode = (latest_decision.mode if latest_decision is not None else "") or (
         latest_snapshot.mode if latest_snapshot is not None else ""
@@ -930,7 +981,7 @@ def _latest_order_lifecycle_for_instance(
     latest_fill: FillSummary,
 ) -> OrderLifecycleSummary:
     fill_state = (latest_fill.result or "").strip().lower()
-    if latest_fill.timestamp:
+    if latest_fill.timestamp and _is_recent_timestamp(latest_fill.timestamp):
         terminal = fill_state in {"filled", "rejected", "canceled"}
         state = fill_state or "fill_event"
         side = (latest_fill.side or "n/a").strip().lower() or "n/a"
@@ -1488,6 +1539,36 @@ def _filter_runtime_session_evidence(
     return dataframe[dataframe["timestamp"] >= runtime_started_at]
 
 
+def _has_non_system_rows(dataframe: pd.DataFrame) -> bool:
+    if dataframe.empty or "symbol" not in dataframe.columns:
+        return False
+    return dataframe["symbol"].astype(str).str.upper().ne("SYSTEM").any()
+
+
+def _latest_row(dataframe: pd.DataFrame, *, prefer_non_system: bool = False) -> pd.Series:
+    if prefer_non_system and _has_non_system_rows(dataframe):
+        candidates = dataframe[dataframe["symbol"].astype(str).str.upper().ne("SYSTEM")]
+        if not candidates.empty:
+            return candidates.iloc[-1]
+    return dataframe.iloc[-1]
+
+
+def _filter_instance_symbols(
+    dataframe: pd.DataFrame,
+    instance: DashboardInstance,
+    *,
+    include_system: bool = False,
+) -> pd.DataFrame:
+    if dataframe.empty or "symbol" not in dataframe.columns:
+        return dataframe
+    symbols = {symbol.upper() for symbol in instance.symbols}
+    allowed = set(symbols)
+    if include_system:
+        allowed.add("SYSTEM")
+    normalized_symbols = dataframe["symbol"].astype(str).str.upper()
+    return dataframe[normalized_symbols.isin(allowed)]
+
+
 def _select_authoritative_account_instance(
     instances: list[DashboardInstance],
     *,
@@ -1499,20 +1580,32 @@ def _select_authoritative_account_instance(
     cutoff = _active_evidence_cutoff(reference=reference, active_minutes=stale_after_minutes)
     candidates: list[tuple[pd.Timestamp, DashboardInstance]] = []
     fallback_candidates: list[tuple[pd.Timestamp, DashboardInstance]] = []
+    stock_candidates: list[tuple[pd.Timestamp, DashboardInstance]] = []
+    stock_fallback_candidates: list[tuple[pd.Timestamp, DashboardInstance]] = []
     for instance in instances:
         snapshot = instance.latest_snapshot
         snapshot_ts = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
         fill = instance.latest_fill
         fill_ts = _parse_instance_timestamp(fill.timestamp if fill is not None else None)
+        decision = instance.latest_decision
+        decision_ts = _parse_instance_timestamp(decision.timestamp if decision is not None else None)
         last_update_ts = _parse_instance_timestamp(instance.last_updated_at)
         evidence_ts = max(
-            [timestamp for timestamp in (fill_ts, snapshot_ts, last_update_ts) if timestamp is not None],
+            [timestamp for timestamp in (decision_ts, fill_ts, snapshot_ts, last_update_ts) if timestamp is not None],
             default=None,
         )
         if evidence_ts is not None:
             fallback_candidates.append((evidence_ts, instance))
             if evidence_ts >= cutoff:
                 candidates.append((evidence_ts, instance))
+            if "stock" in {asset_class.lower() for asset_class in instance.asset_classes}:
+                stock_fallback_candidates.append((evidence_ts, instance))
+                if evidence_ts >= cutoff:
+                    stock_candidates.append((evidence_ts, instance))
+    stock_ranked = stock_candidates or stock_fallback_candidates
+    if stock_ranked:
+        stock_ranked.sort(key=lambda item: item[0], reverse=True)
+        return stock_ranked[0][1]
     ranked = candidates or fallback_candidates
     if not ranked:
         return instances[0]
@@ -1568,7 +1661,6 @@ def _effective_portfolio_state(
     display_qty = snapshot_qty
     display_cash = snapshot_cash
     display_portfolio = snapshot_portfolio
-    value_source = VALUE_SOURCE_UNAVAILABLE
 
     if fill_timestamp is not None and (snapshot_timestamp is None or fill_timestamp > snapshot_timestamp) and fill_result == "filled":
         if fill_side == "buy" and fill_qty > 0:
@@ -1597,6 +1689,17 @@ def _effective_portfolio_state(
         fill,
         allow_snapshot_delta=allow_snapshot_delta,
     )
+    if display_qty <= 0:
+        return {
+            "position_qty": display_qty,
+            "cash": display_cash,
+            "portfolio_value": display_portfolio,
+            "held_value": 0.0,
+            "held_value_estimate": 0.0,
+            "held_value_source": held_value_source,
+            "latest_fill_price": latest_fill_price,
+            "is_provisional": False,
+        }
     held_value = held_value_estimate if held_value_source != VALUE_SOURCE_UNAVAILABLE else None
     return {
         "position_qty": display_qty,
@@ -1613,7 +1716,11 @@ def _effective_portfolio_state(
 def _effective_account_state(
     snapshot: SnapshotSummary | None,
     fill: FillSummary | None,
+    decision: DecisionSummary | None = None,
 ) -> dict[str, Any]:
+    decision_cash = to_float(decision.cash if decision is not None else None)
+    decision_portfolio = to_float(decision.portfolio_value if decision is not None else None)
+    decision_timestamp = _parse_instance_timestamp(decision.timestamp if decision is not None else None)
     snapshot_cash = to_float(snapshot.cash if snapshot is not None else None)
     snapshot_portfolio = to_float(snapshot.portfolio_value if snapshot is not None else None)
     snapshot_timestamp = _parse_instance_timestamp(snapshot.timestamp if snapshot is not None else None)
@@ -1627,6 +1734,13 @@ def _effective_account_state(
     account_cash = snapshot_cash
     account_equity = snapshot_portfolio
     source = "snapshot"
+
+    if decision_timestamp is not None and (snapshot_timestamp is None or decision_timestamp >= snapshot_timestamp):
+        if decision_cash > 0:
+            account_cash = decision_cash
+        if decision_portfolio > 0:
+            account_equity = decision_portfolio
+        source = "decision"
 
     if fill_timestamp is not None and (snapshot_timestamp is None or fill_timestamp > snapshot_timestamp) and fill_result == "filled":
         if fill_cash > 0:
@@ -1648,6 +1762,13 @@ def _age_minutes(timestamp: pd.Timestamp | None) -> float | None:
     if timestamp is None or pd.isna(timestamp):
         return None
     return float((datetime.now(timezone.utc) - timestamp.to_pydatetime()).total_seconds() / 60.0)
+
+
+def _is_recent_timestamp(value: str | None, *, days: int = DEFAULT_FILL_HISTORY_DAYS) -> bool:
+    timestamp = _parse_instance_timestamp(value)
+    if timestamp is None:
+        return False
+    return timestamp >= pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
 
 
 def _classify_status(
@@ -1686,6 +1807,8 @@ def _classify_status(
                 return RuntimeStatus("paper", "info", runtime_message or "Managed paper runtime is running.", age_minutes)
             return RuntimeStatus("running", "info", runtime_message, age_minutes)
         return RuntimeStatus("no_data", "warning", "No runtime evidence found.", age_minutes)
+    if runtime_state == "running" and instance.is_fresh_runtime_session and not _normalized_runtime_mode_context(instance):
+        return RuntimeStatus("running", "ok", runtime_message, age_minutes)
     live_like = latest_decision.mode in {"active-live", "live"} or runtime_mode == "live"
     paper_like = latest_decision.mode == "paper" or runtime_mode == "paper"
     if runtime_state == "running":
@@ -1861,23 +1984,39 @@ def summarize_instance(
     archive_markers: tuple[str, ...] = DEFAULT_ARCHIVE_MARKERS,
 ) -> DashboardInstance:
     evidence_scope = _instance_evidence_scope(instance, archive_markers=archive_markers)
-    decision_result = safe_read_csv(instance.decision_log_path, source="decisions")
-    fill_result = safe_read_csv(instance.fill_log_path, source="fills")
-    snapshot_result = safe_read_csv(instance.snapshot_log_path, source="snapshot")
-    decisions = normalize_timestamps(decision_result.dataframe)
-    fills = normalize_timestamps(fill_result.dataframe)
-    snapshot = _normalize_snapshot_frame(snapshot_result.dataframe)
+    decision_result = _read_csv_with_legacy_context(instance.decision_log_path, source="decisions")
+    fill_result = _read_csv_with_legacy_context(instance.fill_log_path, source="fills")
+    snapshot_result = _read_csv_with_legacy_context(instance.snapshot_log_path, source="snapshot")
+    all_decisions = _filter_instance_symbols(
+        normalize_timestamps(decision_result.dataframe),
+        instance,
+        include_system=True,
+    )
+    all_fills = _filter_instance_symbols(normalize_timestamps(fill_result.dataframe), instance)
+    all_snapshot = _filter_instance_symbols(_normalize_snapshot_frame(snapshot_result.dataframe), instance)
+    decisions = all_decisions
+    fills = all_fills
+    snapshot = all_snapshot
     if instance.is_fresh_runtime_session and instance.runtime_started_at_utc:
         decisions = _filter_runtime_session_evidence(decisions, instance.runtime_started_at_utc)
         fills = _filter_runtime_session_evidence(fills, instance.runtime_started_at_utc)
         snapshot = _filter_runtime_session_evidence(snapshot, instance.runtime_started_at_utc)
+        if not _has_non_system_rows(decisions) and _has_non_system_rows(all_decisions):
+            decisions = all_decisions
+        if fills.empty and not all_fills.empty:
+            fills = all_fills
+        if snapshot.empty and not all_snapshot.empty:
+            snapshot = all_snapshot
     active_decisions = _filter_active_evidence(decisions, active_minutes=stale_after_minutes)
     active_fills = _filter_active_evidence(fills, active_minutes=stale_after_minutes)
     active_snapshot = _filter_active_evidence(snapshot, active_minutes=stale_after_minutes)
 
+    decision_frame = active_decisions if not active_decisions.empty else decisions
+    if not _has_non_system_rows(decision_frame) and _has_non_system_rows(decisions):
+        decision_frame = decisions
     latest_decision = (
         _row_to_summary(
-            (active_decisions.iloc[-1] if not active_decisions.empty else decisions.iloc[-1]).to_dict(),
+            _latest_row(decision_frame, prefer_non_system=True).to_dict(),
             DecisionSummary,
         )
         if not decisions.empty
@@ -1963,14 +2102,25 @@ def _instance_payload(
     *,
     config: BotConfig | None = None,
     active_instance_count: int = 1,
+    account_overview: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     latest_decision = instance.latest_decision or DecisionSummary()
     latest_fill = instance.latest_fill or FillSummary()
     latest_snapshot = instance.latest_snapshot or SnapshotSummary()
     effective_mode = _managed_runtime_mode_context(instance, latest_decision, latest_snapshot) or "unknown"
-    decisions = normalize_timestamps(safe_read_csv(instance.decision_log_path, source="decisions").dataframe)
-    fills = normalize_timestamps(safe_read_csv(instance.fill_log_path, source="fills").dataframe)
-    snapshot = _normalize_snapshot_frame(safe_read_csv(instance.snapshot_log_path, source="snapshot").dataframe)
+    decisions = _filter_instance_symbols(
+        normalize_timestamps(_read_csv_with_legacy_context(instance.decision_log_path, source="decisions").dataframe),
+        instance,
+        include_system=True,
+    )
+    fills = _filter_instance_symbols(
+        normalize_timestamps(_read_csv_with_legacy_context(instance.fill_log_path, source="fills").dataframe),
+        instance,
+    )
+    snapshot = _filter_instance_symbols(
+        _normalize_snapshot_frame(_read_csv_with_legacy_context(instance.snapshot_log_path, source="snapshot").dataframe),
+        instance,
+    )
     now_utc_date = datetime.now(timezone.utc).date()
     decisions_today = 0
     fills_today = 0
@@ -1999,6 +2149,16 @@ def _instance_payload(
         latest_snapshot,
         latest_fill,
         allow_snapshot_delta=active_instance_count <= 1,
+    )
+    account_cash = (
+        to_float(account_overview.get("cash"))
+        if account_overview is not None
+        else effective_portfolio["cash"]
+    )
+    account_equity = (
+        to_float(account_overview.get("account_equity"))
+        if account_overview is not None
+        else effective_portfolio["portfolio_value"]
     )
     sentiment_summary = _latest_sentiment_summary(decisions) or latest_decision
     current_sentiment = _sentiment_snapshot(sentiment_summary)
@@ -2075,7 +2235,7 @@ def _instance_payload(
             else "Paper controls are available from the dashboard."
         ),
         "last_decision_utc": latest_decision.timestamp or "",
-        "last_fill_utc": latest_fill.timestamp or "",
+        "last_fill_utc": latest_fill.timestamp if _is_recent_timestamp(latest_fill.timestamp) else "",
         "heartbeat_age_minutes": instance.status.age_minutes,
         "broker_rejection_count": broker_rejection_count,
         "sentiment_label": current_sentiment.label,
@@ -2100,9 +2260,9 @@ def _instance_payload(
         "evidence_scope": instance.evidence_scope,
         "historical_issue_count": len(instance.historical_issues),
         "historical_issues": [_issue_to_dict(issue) for issue in instance.historical_issues],
-        "account_equity": effective_portfolio["portfolio_value"],
+        "account_equity": account_equity,
         "portfolio_value": effective_portfolio["portfolio_value"],
-        "cash": effective_portfolio["cash"],
+        "cash": account_cash,
         "day_pnl": to_float(latest_snapshot.day_pnl),
         "position_qty": effective_portfolio["position_qty"],
         "held_value": effective_portfolio["held_value"],
@@ -2182,11 +2342,19 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
             "is_stale": True,
         }
     snapshot = freshest.latest_snapshot or SnapshotSummary()
-    effective_account = _effective_account_state(snapshot, freshest.latest_fill)
-    latest_update = snapshot.timestamp or freshest.last_updated_at or ""
+    effective_account = _effective_account_state(snapshot, freshest.latest_fill, freshest.latest_decision)
+    latest_update = (
+        freshest.latest_decision.timestamp
+        if freshest.latest_decision is not None and freshest.latest_decision.timestamp
+        else snapshot.timestamp or freshest.last_updated_at or ""
+    )
     latest_update_ts = _parse_instance_timestamp(latest_update)
     is_stale = True if latest_update_ts is None else (_age_minutes(latest_update_ts) or 0.0) > DEFAULT_STALE_AFTER_MINUTES
-    instances_with_fills = sum(1 for instance in active_instances if instance.latest_fill is not None)
+    instances_with_fills = sum(
+        1
+        for instance in active_instances
+        if instance.latest_fill is not None and _is_recent_timestamp(instance.latest_fill.timestamp)
+    )
     return {
         "account_equity": effective_account["account_equity"],
         "cash": effective_account["cash"],
@@ -2195,7 +2363,7 @@ def _build_account_overview(instances: list[DashboardInstance]) -> dict[str, Any
         "instances_count": len(active_instances),
         "fills_today": instances_with_fills,
         "instances_with_fills": instances_with_fills,
-        "source_instance": freshest.label,
+        "source_instance": "account evidence",
         "latest_update_utc": latest_update,
         "is_stale": is_stale,
         "is_provisional": effective_account["is_provisional"],
@@ -2252,10 +2420,11 @@ def dashboard_status(
         config=config,
         recent_control_actions=effective_recent_control_actions,
     )
+    account_overview = _build_account_overview(summarized)
     payload = {
         "status_updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "aggregate_state": _aggregate_state(summarized),
-        "account_overview": _build_account_overview(summarized),
+        "account_overview": account_overview,
         "historical_context": _build_historical_context(
             summarized,
             stale_after_minutes=stale_after_minutes,
@@ -2266,6 +2435,7 @@ def dashboard_status(
                 instance,
                 config=config,
                 active_instance_count=active_instance_count or len(display_instances),
+                account_overview=account_overview,
             )
             for instance in display_instances
         ],

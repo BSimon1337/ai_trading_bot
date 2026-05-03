@@ -1,0 +1,137 @@
+\documentclass[sigconf,nonacm]{acmart}
+
+\settopmatter{printacmref=false}
+\setcopyright{none}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+
+\usepackage{booktabs}
+
+\acmConference[Final Project]{Final Project Manuscript}{May 2026}{}
+\acmYear{2026}
+\acmISBN{}
+\acmDOI{}
+
+\title{A Sentiment-Aware Machine Learning Trading Bot with Runtime Guardrails and Operator Observability}
+
+\author{Beau}
+\affiliation{%
+  \institution{Final Project}
+  \city{}
+  \country{United States}}
+\email{replace-with-email@example.com}
+
+\begin{document}
+
+\begin{abstract}
+This paper presents an AI trading bot that combines technical market features, financial-news sentiment, machine-learning classification, and runtime safety controls in a modular Python implementation. The system targets both stock and cryptocurrency workflows through Lumibot and Alpaca integrations, supports historical backtesting and paper/live execution modes, and records runtime evidence through CSV decision, fill, snapshot, and registry artifacts. A local Flask dashboard and optional tray application expose account, symbol, sentiment, order-lifecycle, runtime, and control state for operator review. The empirical study uses daily SPY, BTCUSD, and ETHUSD market bars from 2022--2024 and cached news evidence, then evaluates logistic-regression and XGBoost classifiers on technical and sentiment features. Results show modest directional predictability, with the best model reaching 52.4\% cross-validation accuracy and 0.521 ROC AUC. Strategy simulations improve drawdown relative to buy-and-hold in several configurations but do not consistently outperform the benchmark in return. The work is therefore best understood as a safety-conscious research prototype for automated trading rather than a production trading claim.
+\end{abstract}
+
+\keywords{algorithmic trading, machine learning, sentiment analysis, FinBERT, XGBoost, risk management, runtime observability}
+
+\maketitle
+
+\section{Introduction}
+Algorithmic trading systems are often evaluated only by model accuracy or backtest return, but a deployable trading bot also needs data provenance, risk controls, execution safeguards, runtime monitoring, and operator-facing explanations. This project addresses that broader engineering problem by implementing a modular AI trading bot for daily stock and cryptocurrency trading experiments. The bot uses technical indicators, financial-news sentiment, and machine-learning probabilities to choose buy, sell, or hold actions. It also includes fail-closed live-trading safeguards, symbol-scoped evidence logs, and a dashboard that distinguishes current runtime state from stale or historical evidence.
+
+The project was built in Python 3.10 using Lumibot for strategy execution and Alpaca for broker and market-data integration \cite{lumibotdocs,alpacadocs}. Sentiment scoring uses FinBERT-style financial language modeling \cite{araci2019finbert}. Predictive modeling compares logistic regression with gradient-boosted trees using XGBoost \cite{chen2016xgboost}. The main contribution of this project is not a new trading algorithm in isolation; rather, it is an integrated prototype that connects predictive signals with conservative runtime controls and visible operational evidence.
+
+\section{Data}
+The dataset is file-backed and reproducible from local artifacts. Historical market data are stored as daily OHLCV CSV files, while news records are cached as symbol-specific CSV files. The primary collection covers January 1, 2022 through December 31, 2024. SPY contains 753 daily rows and 200 cached news rows. BTCUSD and ETHUSD each contain 1096 daily rows; BTCUSD has 200 cached news rows, and ETHUSD has 52 cached news rows. Each dataset row is labeled with a one-day forward return target.
+
+The model dataset contains 2942 total rows after combining symbols. Technical features include one-day return, 20-day simple moving average, 20-day exponential moving average, 14-day RSI, and 20-day volume z-score. Sentiment features include average headline sentiment and headline count. The runtime path can also use live or cached headlines, but if news access or FinBERT loading fails, the system intentionally falls back to neutral sentiment rather than treating missing news as positive evidence.
+
+\section{Method}
+\subsection{Modeling Pipeline}
+The supervised-learning task predicts whether the next daily return is positive. Three models are trained and evaluated: a technical-only logistic regression model, a logistic regression model using both technical and sentiment features, and an XGBoost model using the full feature set. The training metadata records five time-series-style splits with an average of 490 test rows per split. Classifier outputs are converted into trading signals by comparing the probability of an upward move, \(p_{up}\), against configurable long and short thresholds.
+
+\subsection{Sentiment-Aware Signal Logic}
+The runtime strategy combines model and sentiment signals using a confirmation rule. A model buy is blocked when strong negative sentiment is observed; a model sell is blocked when strong positive sentiment is observed. If the model produces no actionable signal, sufficiently confident positive sentiment may trigger a buy and sufficiently confident negative sentiment may trigger a sell. Otherwise, the strategy holds. This logic makes sentiment a guardrail and fallback signal rather than an unconditional trading command.
+
+\subsection{Execution and Risk Controls}
+The bot runs as a Lumibot strategy with separate stock and cryptocurrency handling. Stock orders use whole-share sizing, while crypto orders support fractional quantities and a minimum notional threshold. Risk controls include maximum position percentage, maximum gross leverage, daily loss limits, trade-per-day limits, cooldowns after losses, maximum consecutive losses, maximum notional per order, kill-switch flattening, stale-market-data checks, and broker-rejection logging. Live trading is blocked unless paper trading is disabled, Alpaca credentials are present, a persistent live-enabled flag is set, and a per-run confirmation token matches.
+
+\subsection{Runtime Observability}
+The system records decisions, fills, and daily snapshots to CSV files. A runtime manager maintains process lifecycle state in a local registry JSON file. The Flask monitor aggregates these evidence streams into symbol-level cards and account-level summaries, including last decision time, last fill time, current sentiment state, headline previews, order lifecycle, broker rejection count, runtime state, and recent control activity. The monitor is designed to distinguish \emph{running}, \emph{stopped}, \emph{paused}, \emph{failed}, \emph{stale}, and \emph{historical} evidence so that old logs do not masquerade as current trading state.
+
+\section{Results}
+Table~\ref{tab:model-results} summarizes model-level evaluation. The XGBoost full-feature model has the highest directional accuracy and ROC AUC, but the margin is small. The technical-only logistic model has the best strategy Sharpe in the cross-validation summary, suggesting that additional sentiment features were not uniformly beneficial in this dataset.
+
+\begin{table}[h]
+  \caption{Cross-validation model summary}
+  \label{tab:model-results}
+  \centering
+  \begin{tabular}{lrrrr}
+    \toprule
+    Model & Accuracy & F1 & ROC AUC & Sharpe \\
+    \midrule
+    Logistic, full & 0.513 & 0.449 & 0.506 & 0.941 \\
+    Logistic, technical & 0.518 & 0.467 & 0.508 & 1.084 \\
+    XGBoost, full & 0.524 & 0.465 & 0.521 & 0.982 \\
+    Benchmark & -- & -- & -- & 1.067 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:oos-results} reports a more conservative out-of-sample strategy matrix for SPY and BTCUSD in 2024. Conservative and medium configurations reduce drawdown compared with buy-and-hold, especially for BTCUSD, but they also underperform the benchmark's total return. Aggressive short-enabled settings are unstable out of sample, with BTCUSD losing 63.7\% despite the benchmark gaining 111.5\%. These results support the need for conservative sizing, paper validation, and live guardrails.
+
+\begin{table*}[t]
+  \caption{Out-of-sample strategy matrix, 2024}
+  \label{tab:oos-results}
+  \centering
+  \begin{tabular}{llrrrrr}
+    \toprule
+    Symbol & Config & Risk & Return \% & Benchmark \% & Sharpe & Max DD \% \\
+    \midrule
+    BTCUSD & Conservative & 0.25 & 2.74 & 111.48 & 0.877 & -1.32 \\
+    BTCUSD & Medium & 0.50 & 6.79 & 111.48 & 0.989 & -2.64 \\
+    BTCUSD & Aggressive & 0.90 & -63.73 & 111.48 & -1.579 & -68.89 \\
+    SPY & Conservative & 0.25 & 1.24 & 24.00 & 0.626 & -1.48 \\
+    SPY & Medium & 0.50 & 2.64 & 24.00 & 0.617 & -2.56 \\
+    SPY & Aggressive & 0.90 & -0.52 & 24.00 & 0.007 & -10.66 \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\section{Discussion}
+The empirical results show why trading-bot evaluation must include more than headline return. Exploratory in-sample-style configuration tables produced very high returns for aggressive BTCUSD settings, but the out-of-sample matrix shows that those settings do not generalize reliably. The best out-of-sample configurations were conservative: they traded less aggressively, had smaller drawdowns, and produced positive but benchmark-lagging returns. In a live-capable system, this is still useful evidence because the architecture can be improved while the guardrails limit operational risk.
+
+The sentiment layer is also operationally important even when its predictive lift is limited. News authorization errors, missing headlines, and unavailable local model dependencies are common runtime conditions. By turning those failures into neutral fallback evidence and monitor-visible availability states, the system avoids silently converting missing data into overconfident trades.
+
+\section{Limitations}
+This study uses daily bars and cached headline data rather than full order-book replay. Fill quality, latency, spreads, market impact, partial fills, and exchange microstructure are not fully modeled. The reported simulations should therefore be treated as comparative research evidence, not guaranteed future performance. The system also depends on API availability and authorization for live news and broker functions. Finally, the dataset is small for modern machine learning, particularly for sentiment features, and covers only a limited market regime.
+
+\section{Conclusion}
+This project demonstrates a modular AI trading bot that integrates market features, financial sentiment, machine-learning signals, execution safeguards, and operator observability. The strongest empirical finding is not that the bot reliably beats buy-and-hold; it is that conservative risk settings and transparent runtime evidence are necessary when moving from backtests toward paper or live operation. Future work should expand the stock universe scanner, add richer walk-forward validation, model transaction costs more directly, compare additional feature sets, and continue hardening the monitor so that every trade and every skipped trade has a clear, current explanation.
+
+\begin{thebibliography}{9}
+
+\bibitem{lumibotdocs}
+Lumiwealth.
+\newblock Lumibot Documentation.
+\newblock \url{https://lumibot.lumiwealth.com/}.
+\newblock Accessed May 2026.
+
+\bibitem{alpacadocs}
+Alpaca Markets.
+\newblock Alpaca Trading API Documentation.
+\newblock \url{https://docs.alpaca.markets/docs/trading-api}.
+\newblock Accessed May 2026.
+
+\bibitem{araci2019finbert}
+Dogu Araci.
+\newblock 2019.
+\newblock FinBERT: Financial Sentiment Analysis with Pre-trained Language Models.
+\newblock \emph{arXiv preprint arXiv:1908.10063}.
+\newblock \url{https://arxiv.org/abs/1908.10063}.
+
+\bibitem{chen2016xgboost}
+Tianqi Chen and Carlos Guestrin.
+\newblock 2016.
+\newblock XGBoost: A Scalable Tree Boosting System.
+\newblock In \emph{Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining}.
+\newblock 785--794.
+\newblock \url{https://doi.org/10.1145/2939672.2939785}.
+
+\end{thebibliography}
+
+\end{document}

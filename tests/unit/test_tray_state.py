@@ -4,6 +4,7 @@ from tradingbot.app.monitor import MonitorConfiguration
 from tradingbot.app.tray import (
     TRAY_MENU_ACTIONS,
     TrayDependencies,
+    _config_with_overrides,
     create_tray_controller,
     tray_state_from_dashboard,
 )
@@ -91,6 +92,28 @@ def test_tray_actions_only_use_monitor_callbacks():
     assert payload_calls == ["refresh"]
     assert opened_urls == ["http://127.0.0.1:8080/"]
     assert controller.exit_requested is True
+
+
+def test_tray_config_overrides_preserve_monitor_limits():
+    config = MonitorConfiguration(
+        dashboard_host="127.0.0.1",
+        dashboard_port=8080,
+        stale_after_minutes=42,
+        historical_issue_limit=3,
+        archive_markers=("archive-me",),
+        runtime_event_limit=7,
+        active_warning_limit=2,
+    )
+
+    updated = _config_with_overrides(config, host="0.0.0.0", port=8090)
+
+    assert updated.dashboard_host == "0.0.0.0"
+    assert updated.dashboard_port == 8090
+    assert updated.stale_after_minutes == 42
+    assert updated.historical_issue_limit == 3
+    assert updated.archive_markers == ("archive-me",)
+    assert updated.runtime_event_limit == 7
+    assert updated.active_warning_limit == 2
 
 
 def test_tray_state_mapping_counts_notes_without_escalating_severity():
